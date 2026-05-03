@@ -230,6 +230,8 @@ class ModCard(CardWidget):
         enabled: bool = True,
         target_language: str | None = None,
         conflict_mode: str = "normal",
+        last_apply_skipped_count: int = 0,
+        last_apply_skip_summary: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -355,6 +357,42 @@ class ModCard(CardWidget):
             new_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             new_badge.setStyleSheet(_pill_qss(_NEW_COLORS[_theme_key()]))
             root.addWidget(new_badge)
+            root.addSpacing(6)
+
+        # Skipped badge — yellow warning shown when the most recent
+        # Apply produced byte-mismatch skips for any of this mod's
+        # patches. Tooltip surfaces the per-patch detail so users can
+        # right-click → Reimport from source without leaving the card.
+        if last_apply_skipped_count and last_apply_skipped_count > 0:
+            count = int(last_apply_skipped_count)
+            skipped_badge = QLabel(f"⚠ {tr('mod_card.skipped')} ({count})")
+            skipped_badge.setObjectName("skippedBadge")
+            skipped_badge.setFixedHeight(26)
+            skipped_badge.setMinimumWidth(95)
+            skipped_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            _skip_colors = (
+                {"bg": "#3E2A10", "text": "#FBBF24", "border": "#92400E"}
+                if isDarkTheme()
+                else {"bg": "#FEF3C7", "text": "#92400E", "border": "#FCD34D"}
+            )
+            skipped_badge.setStyleSheet(_pill_qss(_skip_colors))
+            skipped_badge.setCursor(Qt.CursorShape.WhatsThisCursor)
+            tip_lines = [tr("tooltip.skipped_header", count=count)]
+            try:
+                import json as _json
+                entries = _json.loads(last_apply_skip_summary or "[]")
+                for e in entries[:8]:
+                    label = e.get("label") or e.get("file") or "?"
+                    reason = e.get("reason") or ""
+                    tip_lines.append(f"• {label} — {reason}" if reason else f"• {label}")
+                if len(entries) > 8:
+                    tip_lines.append(f"… +{len(entries) - 8} more")
+            except Exception:
+                pass
+            tip_lines.append("")
+            tip_lines.append(tr("tooltip.skipped_hint"))
+            skipped_badge.setToolTip("\n".join(tip_lines))
+            root.addWidget(skipped_badge)
             root.addSpacing(6)
 
         # Col 3: Status badge — game state (fixed width)
