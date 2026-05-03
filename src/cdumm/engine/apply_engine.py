@@ -20,6 +20,62 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 
+def persist_skip_summary(
+    db_connection,
+    patch_skips: list[dict],
+    participating_mod_ids: set,
+) -> None:
+    """Write per-mod skip counts to the mods table after Apply.
+
+    For each mod in ``participating_mod_ids``, set:
+    - ``last_apply_skipped_count`` = number of patch_skips with that
+      mod's id
+    - ``last_apply_skip_summary`` = JSON list of {label, reason, file}
+      for the badge tooltip, or NULL when count is 0
+
+    Mods NOT in ``participating_mod_ids`` (e.g. disabled this apply)
+    are left untouched so their last-known skip state persists in the
+    badge until they participate again. Lets the user see the badge
+    after disabling a broken mod without it disappearing.
+
+    The skipped-mod-badge work (chunk 2A): without this persistence,
+    the apply pipeline emitted a transient warning toast and
+    `stamp_enabled_mods_as_current` then cleared the only adjacent
+    badge. Mods looked fine afterward even though half their patches
+    silently failed.
+    """
+    import json as _json
+    # Tally skips per mod_id
+    by_mod: dict[int, list[dict]] = {}
+    for s in patch_skips:
+        mod_id = s.get("_source_mod_id")
+        if mod_id is None:
+            continue
+        by_mod.setdefault(int(mod_id), []).append(s)
+
+    for mod_id in participating_mod_ids:
+        skips = by_mod.get(int(mod_id), [])
+        if skips:
+            summary = [
+                {"label": s.get("label", ""),
+                 "reason": s.get("reason", ""),
+                 "file": s.get("_target_file", "")}
+                for s in skips
+            ]
+            db_connection.execute(
+                "UPDATE mods SET last_apply_skipped_count = ?, "
+                "last_apply_skip_summary = ? WHERE id = ?",
+                (len(skips), _json.dumps(summary), int(mod_id))
+            )
+        else:
+            db_connection.execute(
+                "UPDATE mods SET last_apply_skipped_count = 0, "
+                "last_apply_skip_summary = NULL WHERE id = ?",
+                (int(mod_id),)
+            )
+    db_connection.commit()
+
+
 def invalidate_apply_fingerprint(game_dir: Path) -> None:
     """Remove ``CDMods/.apply_fingerprint`` so the next Apply genuinely
     re-runs the pipeline.
@@ -1557,6 +1613,19 @@ class ApplyWorker(QObject):
                             pass
                         if hasattr(self, "_soft_warnings"):
                             self._soft_warnings.append(msg)
+                    # Persist per-mod skip results so the mod card can
+                    # render a yellow badge after the toast dismisses.
+                    # Resets cleanly for mods that participated this
+                    # apply with no skips, so the badge clears when the
+                    # user fixes the underlying issue (skipped-mod
+                    # badge work, chunk 2A).
+                    try:
+                        participating = {m["mod_id"] for m in mod_summary}
+                        persist_skip_summary(
+                            self._db.connection, patch_skips, participating)
+                    except Exception as _e:
+                        logger.debug(
+                            "persist_skip_summary failed: %s", _e)
                     # Tag each overlay entry with the LOWEST priority
                     # number among its contributors (lowest = highest
                     # precedence = CDUMM winner on downstream collisions
