@@ -492,6 +492,16 @@ def _diagnose_unsupported_intent(
          LIST_WRITERS: needs a dedicated serializer per table.
     """
     if "." in (field or ""):
+        # buffinfo has a clean-room item-path resolver
+        # (locate_buff_field) that handles ``buff_data_list[N].xxx``
+        # and ``buff_data_list[N].data.base.X`` paths. Don't reject
+        # those at validation , the apply-time helper does the real
+        # resolution and emits zero-bytes-cleanly when an item is
+        # behind an unknown variant tag.
+        tn = (table_name or "").lower().replace(".pabgb", "")
+        if tn == "buffinfo" and (field or "").startswith(
+                "buff_data_list["):
+            return None
         return (
             f"field '{field}' targets a nested struct sub-field "
             f"(dotted path). Format 3 nested-field writes are not "
@@ -564,10 +574,22 @@ def _classify_intent(
     if nested_msg:
         return nested_msg
 
+    # buffinfo nested-item paths (``buff_data_list[N].xxx``) are
+    # resolved by the clean-room buffinfo parser at apply time, not
+    # via field_schema or PABGB schema. Accept them up front so the
+    # rest of the lookup chain doesn't reject them as "no field_schema
+    # entry". The apply helper drops intents that don't actually
+    # resolve, so a typo in the nested path produces a clean
+    # "0 byte changes" warning rather than a misleading
+    # "add a field_schema entry" instruction the author can't act on.
+    tn_norm = (table_name or "").lower().replace(".pabgb", "")
+    if tn_norm == "buffinfo" and intent.field.startswith(
+            "buff_data_list["):
+        return None
+
     # List writer dispatch: this (table, field) pair has a registered
     # serializer (e.g. dropsetinfo.drops). The validator must accept
     # the intent so the apply-time expander can land the bytes.
-    tn_norm = (table_name or "").lower().replace(".pabgb", "")
     if (tn_norm, intent.field) in LIST_WRITERS:
         return None
 

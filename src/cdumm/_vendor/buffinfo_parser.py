@@ -862,6 +862,11 @@ def locate_buff_field(
             tail = field_path[close_bracket + 1:]
         except (ValueError, IndexError):
             return None
+        if n < 0:
+            # Negative indices like [-1] are not part of the mod schema.
+            # Without this guard ``range(n)`` is empty and the walker
+            # silently lands on item 0, masking the malformed path.
+            return None
         entry = parse_entry(entry_bytes)
         if n >= entry.buff_data_count:
             return None  # past the end of the list

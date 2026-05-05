@@ -549,6 +549,59 @@ def _intents_to_v2_changes(
     return out
 
 
+def _buffinfo_field_candidates(field: str) -> list[str]:
+    """Yield naming-convention aliases for a buffinfo intent field.
+
+    Mirrors the 4-shape lookup chain in
+    ``format3_apply._resolve_write_pos`` (and the validator) so the
+    apply-time path accepts every name the validator accepts. Without
+    this the validator says "supported" but the apply silently emits
+    nothing for camelCase names like ``_minLevel``.
+
+    Item paths (``buff_data_list[N].xxx``) pass through unchanged ,
+    only the leaf identifier inside wrapper-only paths is normalized.
+    """
+    if "[" in field or "." in field:
+        # Item-path leaves are already snake_case in the parser; we
+        # don't fan out aliases for them yet. (NattKh-tool output is
+        # the only known producer of these paths.)
+        return [field]
+    candidates = [field, f"_{field}"]
+    from cdumm.engine.format3_handler import _snake_to_camel
+    if "_" in field:
+        camel = _snake_to_camel(field)
+        if camel != field:
+            candidates.extend([camel, f"_{camel}"])
+    # camelCase → snake_case for inputs that came in camelCase.
+    if any(c.isupper() for c in field):
+        snake = []
+        for i, c in enumerate(field):
+            if c.isupper() and i > 0:
+                snake.append("_")
+            snake.append(c.lower())
+        candidates.append("".join(snake))
+    # Always try the leading-underscore-stripped form too , covers
+    # ``_min_level`` -> ``min_level`` and ``_minLevel`` -> ``minLevel``.
+    if field.startswith("_"):
+        stripped = field[1:]
+        candidates.append(stripped)
+        if any(c.isupper() for c in stripped):
+            snake2 = []
+            for i, c in enumerate(stripped):
+                if c.isupper() and i > 0:
+                    snake2.append("_")
+                snake2.append(c.lower())
+            candidates.append("".join(snake2))
+    # Deduplicate while preserving order.
+    seen = set()
+    out = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
 _BUFFINFO_DTYPE_PACK = {
     "u8": ("B", 1),
     "u16": ("H", 2),
@@ -603,10 +656,20 @@ def _buffinfo_intents_to_changes(
             continue
         entry_off, entry_end = bounds
         entry_bytes = bytes(vanilla_body[entry_off:entry_end])
-        try:
-            located = locate_buff_field(entry_bytes, intent.field)
-        except (ValueError, struct.error):
-            continue
+        # Mirror the validator's 4-shape field-name lookup so a path
+        # like ``_minLevel`` (CDUMM schema convention) resolves the
+        # same as ``min_level`` (NattKh dialect convention). Without
+        # this, intents would validate-then-fail-to-apply and present
+        # to users as "imported, enabled, no effect".
+        located = None
+        for candidate in _buffinfo_field_candidates(intent.field):
+            try:
+                hit = locate_buff_field(entry_bytes, candidate)
+            except (ValueError, struct.error):
+                continue
+            if hit is not None:
+                located = hit
+                break
         if located is None:
             continue
         rel_in_entry, width, dtype = located
