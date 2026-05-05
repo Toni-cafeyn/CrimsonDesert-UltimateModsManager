@@ -121,6 +121,7 @@ _DBASE_FIXED_TAIL_BYTES = 5  # by132 + u32_at136
 #   0, 1, 2, 4, 5, 6, 12, 14, 19, 20, 24, 30, 34, 52, 59, 63, 71,
 #   72, 74, 78, 89, 90, 95, 98, 104, 105, 106, 107, 109, 116
 _VARIANT_TAIL_SIZES: dict[int, int] = {
+    0: 117,   # derived by back-walking entries where tag 0 is last
     3: 12,
     7: 20,
     17: 0,
@@ -432,6 +433,45 @@ def parse_payload_common(
         u32_at136_offset=after_second_array + _AFTER_SECOND_ARRAY_U32_AT136,
         end_offset=end_offset,
     )
+
+
+def serialize_payload_common(payload: BuffPayloadCommon) -> bytes:
+    """Re-emit the bytes of a BuffPayloadCommon. Round-trip check
+    for the decoder: ``serialize_payload_common(parse_payload_common(
+    bytes, 0)) == bytes`` for any well-formed payload."""
+    asset_bytes = payload.asset_path.encode("utf-8")
+    out = bytearray()
+    out += bytes([payload.tag])
+    out += struct.pack("<I", payload.id)
+    out += struct.pack("<I", payload.name_id)
+    out += bytes([payload.flags_a, payload.flags_b])
+    out += struct.pack("<Q", payload.qword_a)
+    out += struct.pack("<Q", payload.qword_b)
+    out += struct.pack("<Q", payload.qword_c)
+    out += struct.pack("<I", len(asset_bytes)) + asset_bytes
+    out += struct.pack("<I", payload.category)
+    out += bytes([payload.by58])
+    out += struct.pack("<I", payload.lookup_a_60)
+    out += struct.pack("<I", payload.lookup_b_62)
+    out += struct.pack("<I", payload.lookup_c_64)
+    out += struct.pack("<I", payload.lookup_d_66)
+    out += bytes([payload.by68, payload.by69])
+    out += struct.pack("<I", payload.lookup_88)
+    out += struct.pack("<I", payload.lookup_90)
+    out += struct.pack("<I", len(payload.first_array))
+    for v in payload.first_array:
+        out += struct.pack("<I", v)
+    out += struct.pack("<I", payload.u32_at128)
+    out += struct.pack("<I", payload.u32_at72)
+    out += struct.pack("<I", payload.u32_at76)
+    out += struct.pack("<I", payload.u32_at80)
+    out += struct.pack("<I", payload.u32_at84)
+    out += struct.pack("<I", len(payload.second_array))
+    for v in payload.second_array:
+        out += struct.pack("<I", v)
+    out += bytes([payload.by132])
+    out += struct.pack("<I", payload.u32_at136)
+    return bytes(out)
 
 
 # Mapping from the public mod-schema field name (the leaf in
