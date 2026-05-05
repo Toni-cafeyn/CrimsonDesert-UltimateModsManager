@@ -720,21 +720,24 @@ def _buffinfo_intents_to_changes(
         fmt, expected_width = spec
         if width != expected_width:
             continue
-        # ``data.variant.type`` writes need careful handling because
-        # the tag byte determines the variant layout , a real type
-        # change would corrupt the entry (different sub-record after
-        # the common payload). Two accepted shapes:
-        #   * intent.new = "VariantName" string -> translate via
-        #     _VARIANT_NAME_TO_TAG. Must match current tag byte.
-        #   * intent.new = int -> must match current tag byte.
-        # In both cases, we emit a no-op confirmation write (same
-        # byte). Mismatches are skipped silently. Integer writes that
-        # would actually change the type are rejected here, not at
-        # apply-time mismatch detection, because the corruption would
-        # be silent if the new int happened to be a valid tag with
-        # the right size.
+        # Writes to the tag byte (reachable via ``.data.variant.type``
+        # OR ``.data.base.tag`` , same byte either way) need careful
+        # handling because the tag determines the variant tail layout.
+        # A real type change would leave the entry with the new tag's
+        # discriminator but the OLD tag's tail bytes after the common
+        # payload , silent corruption.
+        # Accepted shapes:
+        #   * "VariantName" string -> translate via _VARIANT_NAME_TO_TAG
+        #   * int -> use as-is
+        # In both cases the new value must match the current tag byte
+        # (no-op confirmation). Mismatches are skipped silently;
+        # type-changing writes need whole-tail re-encoding (deferred).
         new_value = intent.new
-        if intent.field.endswith(".data.variant.type"):
+        is_tag_write = (
+            intent.field.endswith(".data.variant.type")
+            or intent.field.endswith(".data.base.tag")
+        )
+        if is_tag_write:
             current_tag = vanilla_body[entry_off + rel_in_entry]
             if isinstance(new_value, str):
                 from cdumm._vendor.buffinfo_parser import (
