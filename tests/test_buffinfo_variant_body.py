@@ -250,6 +250,71 @@ def test_variant_type_change_to_different_tag_drops(tmp_path):
     assert "buffinfo.pabgb" not in agg or agg["buffinfo.pabgb"] == []
 
 
+def test_variant_type_int_write_must_match_current_tag(tmp_path):
+    """A bare int intent on variant.type must validate against the
+    current tag. If the int differs, skip , otherwise the layout
+    would corrupt (different tail size after type change)."""
+    import json
+    import sqlite3
+    from cdumm.engine.format3_apply import expand_format3_into_aggregated
+    from tests.test_buffinfo_payload_common import _build_payload_bytes
+
+    payload_tag104 = _build_payload_bytes(tag=104)
+    variant_tail = bytes([0]) + struct.pack("<Q", 0)
+    name = b"X"
+    body = (
+        struct.pack("<I", 1) + struct.pack("<I", 1) + name
+        + bytes([0]) + struct.pack("<I", 1)
+        + struct.pack("<I", 0) + bytes([0])
+        + payload_tag104 + variant_tail
+        + struct.pack("<I", 1) + struct.pack("<I", 5)
+        + struct.pack("<I", 0) + bytes([0])
+        + struct.pack("<I", 0) * 3 + bytes([0, 0])
+    )
+    header = struct.pack("<H", 1) + struct.pack("<II", 1, 0)
+
+    def make_db(new):
+        mod = tmp_path / f"mod_{new}.json"
+        mod.write_text(json.dumps({
+            "format": 3, "target": "buffinfo.pabgb",
+            "intents": [{"entry": "X", "key": 1,
+                         "field": "buff_data_list[0].data.variant.type",
+                         "op": "set", "new": new}]
+        }), encoding="utf-8")
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE mods (id INTEGER PRIMARY KEY, name TEXT, "
+            "enabled INTEGER, json_source TEXT, priority INTEGER, "
+            "mod_type TEXT)")
+        conn.execute(
+            "CREATE TABLE mod_config (mod_id INTEGER, "
+            "custom_values TEXT)")
+        conn.execute(
+            "INSERT INTO mods VALUES (1, 'x', 1, ?, 100, 'paz')",
+            (str(mod),))
+
+        class W:
+            connection = conn
+        return W()
+
+    # Matching int: emit confirmation
+    agg = {}
+    expand_format3_into_aggregated(
+        agg, {}, make_db(104),
+        lambda t: (body, header) if t == "buffinfo.pabgb" else None)
+    assert "buffinfo.pabgb" in agg
+    assert bytes.fromhex(agg["buffinfo.pabgb"][0]["patched"]) == bytes([104])
+
+    # Different int: skip (layout mismatch would corrupt)
+    agg = {}
+    expand_format3_into_aggregated(
+        agg, {}, make_db(3),  # tag 3 != current 104
+        lambda t: (body, header) if t == "buffinfo.pabgb" else None)
+    assert "buffinfo.pabgb" not in agg or agg["buffinfo.pabgb"] == [], (
+        "int type-change must be skipped, not silently corrupt the "
+        "entry")
+
+
 def test_real_vanilla_resolves_variant_body_paths():
     """Walk every vanilla entry, for each item with a known-tag
     variant body, resolve f00 and verify the offset is in-range."""

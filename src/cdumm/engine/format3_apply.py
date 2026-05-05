@@ -720,26 +720,37 @@ def _buffinfo_intents_to_changes(
         fmt, expected_width = spec
         if width != expected_width:
             continue
-        # ``data.variant.type`` paths arrive as strings (the variant
-        # name like "AddPercentInGameContentsBuffData"). Translate to
-        # the tag int via the name table. If the name's tag matches
-        # the current tag byte, this is a no-op confirmation: emit
-        # the same byte as both original and patched. If the names
-        # disagree, skip , changing the variant type would require
-        # re-encoding the whole tail with a different layout.
+        # ``data.variant.type`` writes need careful handling because
+        # the tag byte determines the variant layout , a real type
+        # change would corrupt the entry (different sub-record after
+        # the common payload). Two accepted shapes:
+        #   * intent.new = "VariantName" string -> translate via
+        #     _VARIANT_NAME_TO_TAG. Must match current tag byte.
+        #   * intent.new = int -> must match current tag byte.
+        # In both cases, we emit a no-op confirmation write (same
+        # byte). Mismatches are skipped silently. Integer writes that
+        # would actually change the type are rejected here, not at
+        # apply-time mismatch detection, because the corruption would
+        # be silent if the new int happened to be a valid tag with
+        # the right size.
         new_value = intent.new
-        if (isinstance(new_value, str)
-                and intent.field.endswith(".data.variant.type")):
-            from cdumm._vendor.buffinfo_parser import (
-                _VARIANT_NAME_TO_TAG,
-            )
-            new_tag = _VARIANT_NAME_TO_TAG.get(new_value)
-            if new_tag is None:
-                continue  # unknown variant name
+        if intent.field.endswith(".data.variant.type"):
             current_tag = vanilla_body[entry_off + rel_in_entry]
-            if new_tag != current_tag:
-                continue  # type change not supported (different layout)
-            new_value = current_tag  # no-op, write current byte
+            if isinstance(new_value, str):
+                from cdumm._vendor.buffinfo_parser import (
+                    _VARIANT_NAME_TO_TAG,
+                )
+                new_tag = _VARIANT_NAME_TO_TAG.get(new_value)
+                if new_tag is None:
+                    continue  # unknown variant name
+                if new_tag != current_tag:
+                    continue  # type change not supported
+                new_value = current_tag
+            elif isinstance(new_value, int):
+                if new_value != current_tag:
+                    continue  # type change not supported
+            else:
+                continue  # unsupported type
         try:
             new_bytes = struct.pack(f"<{fmt}", new_value)
         except (struct.error, TypeError):
