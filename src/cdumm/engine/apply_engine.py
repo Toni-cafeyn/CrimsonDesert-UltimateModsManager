@@ -4345,13 +4345,20 @@ class RevertWorker(QObject):
                             actual_size = fpath.stat().st_size
                             if actual_size == len(vanilla_bytes):
                                 # Same size — check content. For large
-                                # files, hash both first; full bytes-
-                                # equal is much slower than two SHA256
-                                # passes once the page cache is warm.
+                                # files, stream-hash live and compare
+                                # to in-memory hash of vanilla_bytes.
+                                # Avoids loading 200MB at once for
+                                # 100MB PAZ files.
                                 if actual_size > 5 * 1024 * 1024:
                                     import hashlib
-                                    live_h = hashlib.sha256(
-                                        fpath.read_bytes()).digest()
+                                    h = hashlib.sha256()
+                                    with open(fpath, "rb") as f:
+                                        while True:
+                                            chunk = f.read(1024 * 1024)
+                                            if not chunk:
+                                                break
+                                            h.update(chunk)
+                                    live_h = h.digest()
                                     van_h = hashlib.sha256(
                                         vanilla_bytes).digest()
                                     if live_h != van_h:
