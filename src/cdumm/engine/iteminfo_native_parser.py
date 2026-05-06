@@ -1500,7 +1500,29 @@ def _read_item(r: _Reader) -> dict:
         elif kind == "carray_cstring":
             out[name] = r.carray(_Reader.cstring)
         elif kind == "carray":
-            out[name] = r.carray(spec[2])
+            if name == "prefab_data_list":
+                # Wrap in try/forward-walk: when prefab_data parsing fails
+                # (bogus count from upstream misalignment OR an unhandled
+                # tribe shape), advance cursor opaquely to the GVP needle
+                # of the next field. Stored as a sentinel dict that the
+                # writer detects and emits raw.
+                snap = r.pos
+                try:
+                    out[name] = r.carray(spec[2])
+                except Exception:
+                    r.pos = snap
+                    opaque = _shapeA2_forward_walk(r)
+                    if opaque is not None:
+                        out[name] = {
+                            "_opaque": True,
+                            "bytes": opaque["bytes"],
+                        }
+                    else:
+                        # Re-raise original error
+                        r.pos = snap
+                        out[name] = r.carray(spec[2])
+            else:
+                out[name] = r.carray(spec[2])
         elif kind == "struct":
             if name == "sharpness_data":
                 # Sharpness shape (W vs PW) depends on default_sub_item.type_id
@@ -1546,7 +1568,10 @@ def _write_item(w: _Writer, it: dict) -> None:
         elif kind == "carray_cstring":
             w.carray(v, _Writer.cstring)
         elif kind == "carray":
-            w.carray(v, spec[3])
+            if isinstance(v, dict) and v.get("_opaque"):
+                w.buf += bytes(v["bytes"])
+            else:
+                w.carray(v, spec[3])
         elif kind == "struct":
             spec[3](w, v)
         elif kind == "optional":
