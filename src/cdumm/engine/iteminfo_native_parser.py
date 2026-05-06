@@ -538,25 +538,64 @@ def _write_MoneyTypeDefine(w: _Writer, v: dict) -> None:
 def _read_PrefabData(r: _Reader) -> dict:
     """Post-1.0.4.1 layout. New u32 hash prefix, then 3 u32 carrays then u8.
 
-    The hash appears to be a tag-name Jenkins hashlittle. Field roles
-    (which carray is equip_slot_list etc) are inferred from .pyi stubs;
-    they line up by size with old layout (only the leading hash is new).
+    Byte-level RE on records 0/911 (passing, all-zero PrefabData[0]) and
+    993/3237 (failing) shows ``equip_slot_list`` element changed from u16 to
+    u32, ``is_craft_material`` moved from after to BEFORE
+    ``tribe_gender_list``, and tribe element changed from u32 to a variable
+    nested struct. We only ship the fixed fields here; tribe element is
+    parsed as raw bytes for now until its inner structure is reverse-
+    engineered.
     """
+    tag_name_hash = r.u32()
+    prefab_names = r.carray(_Reader.u32)
+    equip_slot_list = r.carray(_Reader.u32)
+    is_craft_material = r.u8()
+    tribe_gender_list = [_read_PrefabDataTribe(r) for _ in range(r.u32())]
     return {
-        "tag_name_hash": r.u32(),
-        "prefab_names": r.carray(_Reader.u32),
-        "equip_slot_list": r.carray(_Reader.u16),
-        "tribe_gender_list": r.carray(_Reader.u32),
-        "is_craft_material": r.u8(),
+        "tag_name_hash": tag_name_hash,
+        "prefab_names": prefab_names,
+        "equip_slot_list": equip_slot_list,
+        "is_craft_material": is_craft_material,
+        "tribe_gender_list": tribe_gender_list,
     }
 
 
 def _write_PrefabData(w: _Writer, v: dict) -> None:
     w.u32(v["tag_name_hash"])
     w.carray(v["prefab_names"], _Writer.u32)
-    w.carray(v["equip_slot_list"], _Writer.u16)
-    w.carray(v["tribe_gender_list"], _Writer.u32)
+    w.carray(v["equip_slot_list"], _Writer.u32)
     w.u8(v["is_craft_material"])
+    w.u32(len(v["tribe_gender_list"]))
+    for elem in v["tribe_gender_list"]:
+        _write_PrefabDataTribe(w, elem)
+
+
+def _read_PrefabDataTribe(r: _Reader) -> dict:
+    """One element of PrefabData.tribe_gender_list under post-1.0.4.1 layout.
+
+    Two byte-level shapes have been observed in the live binary:
+
+    * Shape B (cnt=1 records like Rosemary, key=751103): 17 bytes per element.
+      Decomposes cleanly as ``u32 + u64 + carray<u8>(cnt + elems)``.
+    * Shape A (rec 3237 family, key=2112018 etc): 102+ bytes per element with
+      nested item-key carrays inside. Schema not fully RE'd yet.
+
+    We tentatively parse Shape B as the canonical layout. Records matching
+    Shape A still fail the boundary walk; they require additional RE that
+    isn't done yet. Element fields are stored under generic names until the
+    semantic role is clear.
+    """
+    return {
+        "unk_a": r.u32(),
+        "unk_b": r.u64(),
+        "data": r.carray(_Reader.u8),
+    }
+
+
+def _write_PrefabDataTribe(w: _Writer, v: dict) -> None:
+    w.u32(v["unk_a"])
+    w.u64(v["unk_b"])
+    w.carray(v["data"], _Writer.u8)
 
 
 def _read_RepairData(r: _Reader) -> dict:
