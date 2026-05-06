@@ -710,16 +710,27 @@ def _read_PrefabDataTribe(r: _Reader, elem_index: int = 0, total_count: int = 1)
         and r.data[r.pos + 9:r.pos + 12] == b"\x00\x00\x00"
         and 1 <= r.data[r.pos + 8] <= 15
     ):
+        cnt_outer_byte = r.data[r.pos + 8]
         snap = r.pos
+        # cnt_outer != 1 case: Family B/D/F/G per SHAPE_A2_findings_v3.md.
+        # The v1 ODD/EVEN chain walker can't decode this layout and either
+        # raises or silently terminates at a false 10-zero match. Skip it
+        # and go straight to GVP forward-walk for these records.
+        if cnt_outer_byte != 1 and total_count == 1 and elem_index == 0:
+            opaque = _shapeA2_forward_walk(r)
+            if opaque is not None:
+                return opaque
+            r.pos = snap
         try:
-            return _read_PrefabDataTribe_shapeA2(r)
+            result = _read_PrefabDataTribe_shapeA2(r)
+            # Sanity check: Shape A2 with cnt_outer=1 typically <= 200 bytes.
+            if total_count == 1 and (r.pos - snap) > 2048:
+                raise ValueError(
+                    f"Shape A2 consumed {r.pos - snap} bytes"
+                )
+            return result
         except Exception:
             r.pos = snap
-            # cnt_outer != 1 case: Family B/D/F/G layout per
-            # SHAPE_A2_findings_v3.md (~71 records). Single-tribe forward-
-            # walk fallback: scan ahead for the GVP-needle (3 × float 1.0
-            # at scale[3] of next field's first entry) and consume bytes
-            # opaquely to that boundary.
             if total_count == 1 and elem_index == 0:
                 opaque = _shapeA2_forward_walk(r)
                 if opaque is not None:
