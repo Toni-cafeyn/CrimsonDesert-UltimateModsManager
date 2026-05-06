@@ -679,11 +679,19 @@ def _read_PrefabDataTribe(r: _Reader, elem_index: int = 0, total_count: int = 1)
     if r.data[r.pos:r.pos + 4] == b"\x00\x00\x00\x00":
         # Family E (53 records): Shape A's list_a/list_b parses fine but
         # list_c carries FooterOuter-typed entries instead of TribeStat.
-        # Try Shape A first; on any failure (or if list_c count looks
-        # bogus mid-parse), fall back to forward-walk to GVP needle.
+        # Try Shape A first; on any failure (or if Shape A returns but
+        # consumed an unreasonable amount of the buffer), fall back to
+        # forward-walk to GVP needle.
         snap = r.pos
         try:
-            return _read_PrefabDataTribe_shapeA(r)
+            result = _read_PrefabDataTribe_shapeA(r)
+            # Sanity check: tribes should be at most ~2KB for single-tribe
+            # records. If Shape A consumed more, list_c count was bogus.
+            if total_count == 1 and (r.pos - snap) > 2048:
+                raise ValueError(
+                    f"Shape A consumed {r.pos - snap} bytes (likely Family E)"
+                )
+            return result
         except Exception:
             r.pos = snap
             if total_count == 1 and elem_index == 0:
@@ -735,7 +743,9 @@ def _shapeA2_forward_walk(r: _Reader) -> dict | None:
     needle = b"\x00\x00\x80\x3f\x00\x00\x80\x3f\x00\x00\x80\x3f"
     snap = r.pos
     # Cap scan to avoid runaway (tribes observed up to ~1100 bytes per
-    # SHAPE_A2_findings_v3 sample data; allow a generous 4096-byte cap).
+    # SHAPE_A2_findings_v3 sample data; cap at 1500 bytes to avoid
+    # latching onto the GVP of the NEXT record's PrefabData entry, which
+    # would push parser cursor beyond the current record boundary).
     scan_end = min(snap + 4096, len(r.data))
     needle_pos = r.data.find(needle, snap, scan_end)
     if needle_pos < 0:
