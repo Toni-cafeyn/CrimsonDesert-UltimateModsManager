@@ -591,6 +591,26 @@ def _write_SubItem(w: _Writer, v: dict) -> None:
         w.u32(v["value"])
 
 
+def _read_DefaultSubItem(r: _Reader) -> dict:
+    """Standalone default_sub_item field on the ItemInfo record.
+
+    Different from the SubItem nested inside DropDefaultData. In the
+    post-1.0.4.1 layout, this field reads a u32 value only for valid
+    item-key type_ids (< 14). The sentinels 14 (None), 15 (None alt),
+    and 255 (None alt 2) carry no payload.
+    """
+    type_id = r.u8()
+    if type_id < 14:
+        return {"type_id": type_id, "value": r.u32()}
+    return {"type_id": type_id, "value": None}
+
+
+def _write_DefaultSubItem(w: _Writer, v: dict) -> None:
+    w.u8(v["type_id"])
+    if v["type_id"] < 14:
+        w.u32(v["value"])
+
+
 def _read_DropDefaultData(r: _Reader) -> dict:
     return {
         "drop_enchant_level": r.u16(),
@@ -804,7 +824,7 @@ _ITEM_FIELDS = [
     ("dynamic_page_data_list", "carray", _read_PageData, _write_PageData),
     ("inspect_data_list", "carray", _read_InspectData, _write_InspectData),
     ("inspect_action", "struct", _read_InspectAction, _write_InspectAction),
-    ("default_sub_item", "struct", _read_SubItem, _write_SubItem),
+    ("default_sub_item", "struct", _read_DefaultSubItem, _write_DefaultSubItem),
     ("cooltime", "i64"),
     # Post-1.0.4.1 additions, observed as 8-byte zero fields between
     # cooltime and item_charge_type. Type assumed i64 by best-fit.
