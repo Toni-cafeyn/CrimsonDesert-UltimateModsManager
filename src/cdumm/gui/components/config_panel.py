@@ -269,17 +269,32 @@ class _ResizeHandle(QWidget):
         e.accept()
 
     def mouseMoveEvent(self, e):  # noqa: N802
+        # Gate on left-button held. Without this guard, a press that's
+        # dropped by Qt (focus loss, modal popup eating the release,
+        # etc.) leaves _drag_start_x set, and the next stray move event
+        # — even one with no buttons held — would resize the panel.
+        # Treat any move without LeftButton as a stale event and bail.
+        if not (e.buttons() & Qt.MouseButton.LeftButton):
+            return
         if self._drag_start_x is None or self._drag_start_width is None:
             return
         # Cursor delta in screen coords. Panel is right-anchored, so
         # invert: dragging the handle LEFT (negative dx) widens the
-        # panel.
+        # panel. Mid-drag set_panel_width() updates the live width
+        # without persisting; persist is reserved for release so we
+        # get one SQLite write per gesture, not one per pixel.
         dx = e.globalPosition().x() - self._drag_start_x
         new_width = int(self._drag_start_width - dx)
         self._panel.set_panel_width(new_width)
         e.accept()
 
     def mouseReleaseEvent(self, e):  # noqa: N802
+        # Persist the final width once on release. Mid-drag mouseMove
+        # called set_panel_width() without persisting, so a 200-pixel
+        # drag produced ~200 width updates but zero DB writes; this
+        # release commits the chosen width with a single Config.set().
+        if self._drag_start_x is not None:
+            self._panel.persist_panel_width()
         self._drag_start_x = None
         self._drag_start_width = None
         e.accept()
@@ -654,15 +669,22 @@ class ConfigPanel(QWidget):
     # User-resizable width (Task 2.1)
     # ------------------------------------------------------------------
 
-    def set_panel_width(self, width: int) -> None:
+    def set_panel_width(self, width: int, *, persist: bool = False) -> None:
         """Set the panel's target width, clamped to [MIN, MAX].
 
         Updates the instance ``_PANEL_WIDTH`` so subsequent open
         animations land at the new width, and — when the panel is
         currently visible (maximumWidth > 0) — applies the new width
         immediately via ``setMaximumWidth`` so the drag feels live.
-        Task 2.2 will persist the value; this method is the pure
-        widget-side write.
+
+        ``persist`` defaults to ``False`` because the resize handle
+        calls this method per pixel of cursor motion during a drag —
+        persisting on every call would issue ~200 SQLite writes for a
+        single 200-pixel gesture. Drag callers should call
+        :meth:`persist_panel_width` once on mouse release to commit
+        the final value. Direct callers (e.g. a settings dialog
+        committing a numeric width) can pass ``persist=True`` for the
+        legacy write-through behaviour.
         """
         clamped = max(self._MIN_PANEL_WIDTH,
                       min(self._MAX_PANEL_WIDTH, int(width)))
@@ -682,14 +704,26 @@ class ConfigPanel(QWidget):
                     and anim.endValue() not in (None, 0)):
                 anim.stop()
             self.setMaximumWidth(clamped)
-        # Persist globally so the next panel open restores the width.
-        # No-op when no DB has been wired in (legacy callers).
-        if self._db is not None:
-            try:
-                from cdumm.storage.config import Config
-                Config(self._db).set("config_panel_width", str(clamped))
-            except Exception as e:
-                logger.debug("set_panel_width: persist failed: %s", e)
+        if persist:
+            self.persist_panel_width()
+
+    def persist_panel_width(self) -> None:
+        """Write the current ``_PANEL_WIDTH`` to the config DB.
+
+        Called by ``_ResizeHandle.mouseReleaseEvent`` once per drag
+        gesture, and (via ``persist=True``) by direct width-setters
+        like a future settings dialog. No-op when no DB has been wired
+        in (legacy callers that constructed the panel without
+        ``set_db``).
+        """
+        if self._db is None:
+            return
+        try:
+            from cdumm.storage.config import Config
+            Config(self._db).set(
+                "config_panel_width", str(self._PANEL_WIDTH))
+        except Exception as e:
+            logger.debug("persist_panel_width failed: %s", e)
 
     def resizeEvent(self, event):  # noqa: N802
         """Reposition the right-edge drag handle on every resize."""
