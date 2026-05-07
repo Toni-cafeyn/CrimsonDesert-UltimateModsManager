@@ -697,7 +697,13 @@ class CdummWindow(FluentWindow):
         self._db = db
         self._game_dir = game_dir
         self._app_data_dir = app_data_dir or Path.home() / "AppData" / "Local" / "cdumm"
-        self._cdmods_dir = game_dir / "CDMods" if game_dir else self._app_data_dir
+        from cdumm.engine.cdmods_paths import get_cdmods_root
+        from cdumm.storage.config import Config as _Config
+        self._cdmods_dir = (
+            get_cdmods_root(
+                _Config(db) if db is not None else None, game_dir)
+            if game_dir else self._app_data_dir
+        )
         self._cdmods_dir.mkdir(parents=True, exist_ok=True)
         self._deltas_dir = self._cdmods_dir / "deltas"
         self._vanilla_dir = self._cdmods_dir / "vanilla"
@@ -3581,7 +3587,7 @@ class CdummWindow(FluentWindow):
                         from cdumm.engine.import_handler import install_companion_asis
                         try:
                             game_dir = self._game_dir
-                            mods_dir = game_dir / "CDMods" / "mods"
+                            mods_dir = self._cdmods_dir / "mods"
                             ticked_paths = {p for p, _d in selected}
                             # Pass EVERY detected preset so the cog can
                             # toggle the full set later.
@@ -3768,7 +3774,7 @@ class CdummWindow(FluentWindow):
                             d2 = dict(data)
                             d2["name"] = label
                             prefixed_presets.append((dest, d2))
-                        mods_dir = self._game_dir / "CDMods" / "mods"
+                        mods_dir = self._cdmods_dir / "mods"
                         initial = {prefixed_presets[0][0]}
                         _original = getattr(
                             self, "_original_drop_path", None) or path
@@ -3977,7 +3983,7 @@ class CdummWindow(FluentWindow):
                             "to import_multi_variant (%d alternatives)",
                             _current.name, len(mutex_presets))
                         try:
-                            mods_dir = self._game_dir / "CDMods" / "mods"
+                            mods_dir = self._cdmods_dir / "mods"
                             # Default: first JSON enabled, rest disabled
                             # (they're mutex — enabling more makes no
                             # sense). User can swap via cog later.
@@ -5495,7 +5501,9 @@ class CdummWindow(FluentWindow):
 
         # Update paths
         self._game_dir = new_path
-        self._cdmods_dir = new_path / "CDMods"
+        # Bootstrap: override config lives inside the new dir's DB.
+        from cdumm.engine.cdmods_paths import get_cdmods_root
+        self._cdmods_dir = get_cdmods_root(None, new_path)
         self._cdmods_dir.mkdir(parents=True, exist_ok=True)
         self._deltas_dir = self._cdmods_dir / "deltas"
         self._vanilla_dir = self._cdmods_dir / "vanilla"

@@ -500,6 +500,15 @@ class ModsPage(QWidget):
             pass
         self.refresh()
 
+    def _cdmods_root(self) -> Path | None:
+        """Return the configured CDMods root, honoring cdmods_path override."""
+        if self._game_dir is None:
+            return None
+        from cdumm.engine.cdmods_paths import get_cdmods_root
+        from cdumm.storage.config import Config
+        cfg = Config(self._db) if self._db is not None else None
+        return get_cdmods_root(cfg, self._game_dir)
+
     def set_nexus_updates(self, updates: dict) -> None:
         """Apply NexusMods update status to version pills on mod cards.
 
@@ -1240,7 +1249,7 @@ class ModsPage(QWidget):
                     if self._game_dir is not None:
                         from cdumm.gui.preset_picker import (
                             _detect_mutex_offset_groups)
-                        variants_dir = (self._game_dir / "CDMods" / "mods"
+                        variants_dir = (self._cdmods_root() / "mods"
                                         / str(mod_id) / "variants")
                         for v in variants_list:
                             fn = v.get("filename")
@@ -1578,9 +1587,9 @@ class ModsPage(QWidget):
                 try:
                     from pathlib import Path as _P
                     cl = _P(chosen_leaf)
-                    sources_root = (self._game_dir / "CDMods"
-                                    / "sources" / str(mod_id)
-                                    if self._game_dir else None)
+                    _cdmods = self._cdmods_root()
+                    sources_root = (_cdmods / "sources" / str(mod_id)
+                                    if _cdmods else None)
                     if (sources_root and cl.exists()
                             and (sources_root in cl.parents
                                  or cl == sources_root)):
@@ -1612,9 +1621,9 @@ class ModsPage(QWidget):
                 #      archive contents, so cloning it captures all
                 #      variants).
                 #   3. drop_name basename as last-ditch.
-                sources_root = (self._game_dir / "CDMods"
-                                / "sources" / str(mod_id)
-                                if self._game_dir else None)
+                _cdmods = self._cdmods_root()
+                sources_root = (_cdmods / "sources" / str(mod_id)
+                                if _cdmods else None)
                 cfg_src = resolve_cfg_src(
                     source_path=source_path,
                     sources_dir=sources_root,
@@ -1687,9 +1696,9 @@ class ModsPage(QWidget):
                 try:
                     from pathlib import Path as _P
                     cl = _P(chosen_leaf)
-                    sources_root = (self._game_dir / "CDMods"
-                                    / "sources" / str(mod_id)
-                                    if self._game_dir else None)
+                    _cdmods = self._cdmods_root()
+                    sources_root = (_cdmods / "sources" / str(mod_id)
+                                    if _cdmods else None)
                     if (sources_root and cl.exists()
                             and (sources_root in cl.parents
                                  or cl == sources_root)):
@@ -1707,9 +1716,9 @@ class ModsPage(QWidget):
                     logger.warning(
                         "Grid variant staging failed (%s) — worker "
                         "may not find leaf after remove_mod", _e)
-                sources_root = (self._game_dir / "CDMods"
-                                / "sources" / str(mod_id)
-                                if self._game_dir else None)
+                _cdmods = self._cdmods_root()
+                sources_root = (_cdmods / "sources" / str(mod_id)
+                                if _cdmods else None)
                 cfg_src = resolve_cfg_src(
                     source_path=source_path,
                     sources_dir=sources_root,
@@ -1746,7 +1755,7 @@ class ModsPage(QWidget):
             if self._game_dir is None:
                 logger.error("variants apply: game_dir not set")
                 return
-            mods_dir = self._game_dir / "CDMods" / "mods"
+            mods_dir = self._cdmods_root() / "mods"
             # Collect any per-variant label selections the user made via
             # the "Configure options..." button on each variant row.
             label_sel = None
@@ -1860,9 +1869,9 @@ class ModsPage(QWidget):
                         try:
                             from pathlib import Path as _P
                             vd = _P(variant_dir)
-                            sources_root = (self._game_dir / "CDMods"
-                                            / "sources" / str(mod_id)
-                                            if self._game_dir else None)
+                            _cdmods = self._cdmods_root()
+                            sources_root = (_cdmods / "sources" / str(mod_id)
+                                            if _cdmods else None)
                             if (sources_root and vd.exists()
                                     and (sources_root in vd.parents
                                          or vd == sources_root)):
@@ -1882,9 +1891,9 @@ class ModsPage(QWidget):
                                 "Folder-variant staging failed (%s) — "
                                 "worker may not find variant after "
                                 "remove_mod", _e)
-                        sources_root = (self._game_dir / "CDMods"
-                                        / "sources" / str(mod_id)
-                                        if self._game_dir else None)
+                        _cdmods = self._cdmods_root()
+                        sources_root = (_cdmods / "sources" / str(mod_id)
+                                        if _cdmods else None)
                         cfg_src = resolve_cfg_src(
                             source_path=source_path,
                             sources_dir=sources_root,
@@ -1936,9 +1945,9 @@ class ModsPage(QWidget):
                         try:
                             from pathlib import Path as _P
                             fp_path = _P(fp)
-                            sources_root = (self._game_dir / "CDMods"
-                                            / "sources" / str(mod_id)
-                                            if self._game_dir else None)
+                            _cdmods = self._cdmods_root()
+                            sources_root = (_cdmods / "sources" / str(mod_id)
+                                            if _cdmods else None)
                             if (sources_root and fp_path.exists()
                                     and (sources_root in fp_path.parents
                                          or fp_path == sources_root)):
@@ -1961,9 +1970,9 @@ class ModsPage(QWidget):
                                 "Preset staging failed (%s) — worker "
                                 "may not find preset after remove_mod",
                                 _e)
-                        sources_root = (self._game_dir / "CDMods"
-                                        / "sources" / str(mod_id)
-                                        if self._game_dir else None)
+                        _cdmods = self._cdmods_root()
+                        sources_root = (_cdmods / "sources" / str(mod_id)
+                                        if _cdmods else None)
                         cfg_src = resolve_cfg_src(
                             source_path=source_path,
                             sources_dir=sources_root,

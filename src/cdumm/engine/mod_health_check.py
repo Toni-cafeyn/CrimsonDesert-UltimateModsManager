@@ -11,9 +11,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from cdumm.archive.hashlittle import hashlittle
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +138,7 @@ class HealthIssue:
 def check_mod_health(
     mod_files: dict[str, Path],
     game_dir: Path,
+    config: "Config | None" = None,
 ) -> list[HealthIssue]:
     """Run all health checks on mod files before importing.
 
@@ -171,7 +176,7 @@ def check_mod_health(
     # C5: PAZ size in PAMT vs actual file size
     _t = _time.perf_counter()
     for rel_path, abs_path in pamt_files.items():
-        issues.extend(_check_paz_sizes(rel_path, abs_path, mod_files, game_dir))
+        issues.extend(_check_paz_sizes(rel_path, abs_path, mod_files, game_dir, config=config))
     timings["C5_paz_sizes"] = _time.perf_counter() - _t
 
     # Pre-parse each mod PAMT once — C1 and C6 both need it. Uses
@@ -220,9 +225,10 @@ def check_mod_health(
     }
     if _dirs_touched:
         _t = _time.perf_counter()
+        _vanilla_root = get_cdmods_root(config, game_dir) / "vanilla"
         for _dir in _dirs_touched:
-            _van_pamt = game_dir / "CDMods" / "vanilla" / _dir / "0.pamt"
-            _van_paz_dir = game_dir / "CDMods" / "vanilla" / _dir
+            _van_pamt = _vanilla_root / _dir / "0.pamt"
+            _van_paz_dir = _vanilla_root / _dir
             if not _van_pamt.exists():
                 _van_pamt = game_dir / _dir / "0.pamt"
                 _van_paz_dir = game_dir / _dir
@@ -239,6 +245,7 @@ def check_mod_health(
         issues.extend(_check_duplicate_paths(
             rel_path, abs_path, game_dir,
             mod_entries=_mod_entries_by_pamt.get(str(abs_path)),
+            config=config,
         ))
     timings["C1_duplicate_paths"] = _time.perf_counter() - _t
 
@@ -260,7 +267,7 @@ def check_mod_health(
     # W1: Version mismatch
     _t = _time.perf_counter()
     for rel_path, abs_path in pamt_files.items():
-        issues.extend(_check_version_mismatch(rel_path, abs_path, game_dir))
+        issues.extend(_check_version_mismatch(rel_path, abs_path, game_dir, config=config))
     timings["W1_version_mismatch"] = _time.perf_counter() - _t
 
     # Emit per-check timings ONLY when total health_check exceeds 1s,
@@ -383,6 +390,7 @@ def _check_papgt_hash(rel_path: str, abs_path: Path) -> list[HealthIssue]:
 def _check_paz_sizes(
     pamt_rel: str, pamt_path: Path,
     mod_files: dict[str, Path], game_dir: Path,
+    config: "Config | None" = None,
 ) -> list[HealthIssue]:
     """C5: Verify PAMT PAZ size fields match actual file sizes."""
     data = pamt_path.read_bytes()
@@ -412,7 +420,7 @@ def _check_paz_sizes(
             actual_size = mod_files[paz_rel].stat().st_size
         else:
             # Use vanilla backup if available (game dir may be modded/updated)
-            vanilla_paz = game_dir / "CDMods" / "vanilla" / dir_name / f"{i}.paz"
+            vanilla_paz = get_cdmods_root(config, game_dir) / "vanilla" / dir_name / f"{i}.paz"
             game_paz = game_dir / dir_name / f"{i}.paz"
             if vanilla_paz.exists():
                 actual_size = vanilla_paz.stat().st_size
@@ -447,6 +455,7 @@ def _check_paz_sizes(
 def _check_duplicate_paths(
     pamt_rel: str, pamt_path: Path, game_dir: Path,
     mod_entries: list | None = None,
+    config: "Config | None" = None,
 ) -> list[HealthIssue]:
     """C1: Check if mod adds files that already exist in a different PAZ.
 
@@ -462,9 +471,9 @@ def _check_duplicate_paths(
     dir_name = pamt_rel.split("/")[0]
     mod_dir = str(pamt_path.parent)
     # Prefer vanilla backup over current game files
-    vanilla_pamt = game_dir / "CDMods" / "vanilla" / dir_name / "0.pamt"
+    vanilla_pamt = get_cdmods_root(config, game_dir) / "vanilla" / dir_name / "0.pamt"
     game_pamt = vanilla_pamt if vanilla_pamt.exists() else game_dir / dir_name / "0.pamt"
-    vanilla_paz_dir = game_dir / "CDMods" / "vanilla" / dir_name
+    vanilla_paz_dir = get_cdmods_root(config, game_dir) / "vanilla" / dir_name
     paz_dir = str(vanilla_paz_dir) if vanilla_paz_dir.exists() else str(game_dir / dir_name)
 
     if not game_pamt.exists():
@@ -638,6 +647,7 @@ def _check_papgt_overwrites(
 
 def _check_version_mismatch(
     pamt_rel: str, pamt_path: Path, game_dir: Path,
+    config: "Config | None" = None,
 ) -> list[HealthIssue]:
     """W1: Check if mod was built for a different game version."""
     data = pamt_path.read_bytes()
@@ -645,7 +655,7 @@ def _check_version_mismatch(
         return []
 
     dir_name = pamt_rel.split("/")[0]
-    vanilla_pamt = game_dir / "CDMods" / "vanilla" / dir_name / "0.pamt"
+    vanilla_pamt = get_cdmods_root(config, game_dir) / "vanilla" / dir_name / "0.pamt"
     game_pamt = vanilla_pamt if vanilla_pamt.exists() else game_dir / dir_name / "0.pamt"
     if not game_pamt.exists():
         return []
@@ -780,6 +790,7 @@ def auto_fix_matches(
     matches: list[tuple[str, Path]],
     issues: list[HealthIssue],
     game_dir: Path,
+    config: "Config | None" = None,
 ) -> list[tuple[str, Path]]:
     """Fix mod files based on health check issues.
 
@@ -799,7 +810,7 @@ def auto_fix_matches(
     fixed_matches = []
     for rel_path, abs_path in matches:
         if rel_path.endswith(".pamt") and c1_issues:
-            fixed_path = _fix_duplicate_pamt(rel_path, abs_path, game_dir)
+            fixed_path = _fix_duplicate_pamt(rel_path, abs_path, game_dir, config=config)
             if fixed_path:
                 fixed_matches.append((rel_path, fixed_path))
                 logger.info("Auto-fixed PAMT: %s", rel_path)
@@ -817,6 +828,7 @@ def auto_fix_matches(
 
 def _fix_duplicate_pamt(
     pamt_rel: str, pamt_path: Path, game_dir: Path,
+    config: "Config | None" = None,
 ) -> Path | None:
     """Fix a PAMT with duplicate entries by starting from vanilla and
     applying only the legitimate changes (PAZ size update + record updates
@@ -832,7 +844,7 @@ def _fix_duplicate_pamt(
         return None
 
     dir_name = pamt_rel.split("/")[0]
-    vanilla_pamt = game_dir / "CDMods" / "vanilla" / dir_name / "0.pamt"
+    vanilla_pamt = get_cdmods_root(config, game_dir) / "vanilla" / dir_name / "0.pamt"
     game_pamt = vanilla_pamt if vanilla_pamt.exists() else game_dir / dir_name / "0.pamt"
     if not game_pamt.exists():
         return None

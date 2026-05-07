@@ -6,10 +6,15 @@ import tempfile
 import uuid
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from cdumm.engine.cdmods_paths import get_cdmods_root
 from cdumm.engine.delta_engine import generate_delta, get_changed_byte_ranges, save_delta
 from cdumm.engine.snapshot_manager import SnapshotManager
 from cdumm.storage.database import Database
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +37,7 @@ def _emit_progress(pct, msg):
 
 
 @contextlib.contextmanager
-def import_staging_dir(game_dir: Path):
+def import_staging_dir(game_dir: Path, config: "Config | None" = None):
     """Yield a unique extraction-staging directory under
     game_dir/CDMods/_import_staging/<uuid>/.
 
@@ -47,7 +52,7 @@ def import_staging_dir(game_dir: Path):
     Falls back to system temp if the game CDMods dir cannot be created
     (read-only mount, permission issue) so callers don't fail outright.
     """
-    base = game_dir / "CDMods" / "_import_staging"
+    base = get_cdmods_root(config, game_dir) / "_import_staging"
     try:
         base.mkdir(parents=True, exist_ok=True)
         staging = base / uuid.uuid4().hex
@@ -889,7 +894,9 @@ def _try_paz_entry_import(
     paz_index = int(rel_path.split("/")[1].split(".")[0])  # e.g. 0 from "0.paz"
 
     # Find PAMTs — mod's PAMT (if shipped) or vanilla PAMT
-    vanilla_pamt = game_dir / "CDMods" / "vanilla" / dir_name / "0.pamt"
+    from cdumm.storage.config import Config as _Config
+    _cdmods = get_cdmods_root(_Config(db) if db is not None else None, game_dir)
+    vanilla_pamt = _cdmods / "vanilla" / dir_name / "0.pamt"
     if not vanilla_pamt.exists():
         vanilla_pamt = game_dir / dir_name / "0.pamt"
     if not vanilla_pamt.exists():
@@ -910,8 +917,8 @@ def _try_paz_entry_import(
     _t = time.perf_counter()
     try:
         _van_paz_dir = str(
-            (game_dir / "CDMods" / "vanilla" / dir_name)
-            if (game_dir / "CDMods" / "vanilla" / dir_name / "0.pamt").exists()
+            (_cdmods / "vanilla" / dir_name)
+            if (_cdmods / "vanilla" / dir_name / "0.pamt").exists()
             else (game_dir / dir_name)
         )
         van_entries = _load_vanilla_pamt(str(vanilla_pamt), _van_paz_dir)
@@ -1528,7 +1535,8 @@ def _match_game_files(
 
 
 def _detect_standalone_mod(
-    extracted_dir: Path, game_dir: Path, snapshot: SnapshotManager
+    extracted_dir: Path, game_dir: Path, snapshot: SnapshotManager,
+    config: "Config | None" = None,
 ) -> dict[str, str] | None:
     """Detect if a mod ships standalone PAZ/PAMT in a numbered directory.
 
@@ -1552,7 +1560,7 @@ def _detect_standalone_mod(
             continue
 
         # Compare mod's files against vanilla (check both game dir and vanilla backup)
-        vanilla_backup_dir = game_dir / "CDMods" / "vanilla"
+        vanilla_backup_dir = get_cdmods_root(config, game_dir) / "vanilla"
         game_pamt = game_dir / dir_name / "0.pamt"
         game_paz = game_dir / dir_name / "0.paz"
         backup_pamt = vanilla_backup_dir / dir_name / "0.pamt"
@@ -3330,7 +3338,11 @@ def import_from_bsdiff(
 
     # Generate our own delta (vanilla → patched) so it goes through the
     # standard apply pipeline with proper byte-range tracking
-    vanilla_file = game_dir / "CDMods" / "vanilla" / target_path.replace("/", "\\")
+    from cdumm.storage.config import Config as _Config
+    vanilla_file = (
+        get_cdmods_root(_Config(db) if db is not None else None, game_dir)
+        / "vanilla" / target_path.replace("/", "\\")
+    )
     if vanilla_file.exists():
         vanilla_bytes = vanilla_file.read_bytes()
     else:
@@ -3488,7 +3500,11 @@ def import_from_natt_format_3(
         from cdumm.engine.json_patch_handler import (
             _derive_pamt_dir, _find_pamt_entry,
         )
-        vanilla_dir = game_dir / "CDMods" / "vanilla"
+        from cdumm.storage.config import Config as _Config
+        vanilla_dir = (
+            get_cdmods_root(_Config(db) if db is not None else None, game_dir)
+            / "vanilla"
+        )
         if not vanilla_dir.exists():
             vanilla_dir = game_dir
         for extra_target, _ in target_pairs[1:]:
@@ -3558,7 +3574,10 @@ def _persist_format3_mod(
     # Resolve target into a PAMT entry so we know which PAZ it lives in.
     # Required for mod_deltas (file_path / byte_start / byte_end) and so
     # the apply pipeline's vanilla extractor can find it.
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    from cdumm.storage.config import Config as _Config
+    _cdmods = get_cdmods_root(
+        _Config(db) if db is not None else None, game_dir)
+    vanilla_dir = _cdmods / "vanilla"
     if not vanilla_dir.exists():
         vanilla_dir = game_dir
     entry = _find_pamt_entry(target, vanilla_dir)
@@ -3575,7 +3594,7 @@ def _persist_format3_mod(
     # Store the Format 3 JSON in CDMods/mods/. Reuse the same name-
     # sanitization import_json_fast uses (Windows reserved chars + a
     # short hash to disambiguate post-sanitize collisions).
-    mods_dir = game_dir / "CDMods" / "mods"
+    mods_dir = _cdmods / "mods"
     mods_dir.mkdir(parents=True, exist_ok=True)
     import re as _re_fn
     import hashlib as _hash
@@ -3682,7 +3701,11 @@ def import_from_json_patch(
     mod_name = _json_mod_display_name(patch_data, json_path.stem)
 
     # Mount-time fast import: just store JSON, patches applied at Apply time
-    mods_dir = game_dir / "CDMods" / "mods"
+    from cdumm.storage.config import Config as _Config
+    mods_dir = (
+        get_cdmods_root(_Config(db) if db is not None else None, game_dir)
+        / "mods"
+    )
     fast_result = import_json_fast(
         patch_data, game_dir, db, mods_dir, mod_name,
         existing_mod_id=existing_mod_id, modinfo=modinfo)
@@ -3764,7 +3787,11 @@ def _store_json_patches(db: Database, result, patch_data: dict, game_dir: Path) 
         return
     mod_id = row[0]
 
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    from cdumm.storage.config import Config as _Config
+    vanilla_dir = (
+        get_cdmods_root(_Config(db) if db is not None else None, game_dir)
+        / "vanilla"
+    )
     base_dir = vanilla_dir if vanilla_dir.exists() else game_dir
 
     for patch in patch_data.get("patches", []):
@@ -4045,7 +4072,11 @@ def _process_extracted_files(
 
             # Use vanilla backup if available (accurate base for delta),
             # fall back to current game file
-            vanilla_backup = game_dir / "CDMods" / "vanilla" / rel_path.replace("/", "\\")
+            from cdumm.storage.config import Config as _Config
+            vanilla_backup = (
+                get_cdmods_root(_Config(db) if db is not None else None, game_dir)
+                / "vanilla" / rel_path.replace("/", "\\")
+            )
             vanilla_path = game_dir / rel_path.replace("/", "\\")
             vanilla_source = vanilla_backup if vanilla_backup.exists() else vanilla_path
             if not vanilla_source.exists():

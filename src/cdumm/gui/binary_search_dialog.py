@@ -152,13 +152,15 @@ class _AutoBisectWorker:
 
     def run(self) -> None:
         from cdumm.engine.game_monitor import launch_and_test
+        from cdumm.engine.cdmods_paths import get_cdmods_root
 
         # SQLite handles can't cross threads — open a fresh one here.
-        db_path = self._game_dir / "CDMods" / "cdumm.db"
+        db_path = get_cdmods_root(None, self._game_dir) / "cdumm.db"
         thread_db = Database(db_path)
         thread_db.initialize()
+        from cdumm.storage.config import Config as _Config
         thread_mm = ModManager(
-            thread_db, self._game_dir / "CDMods" / "deltas"
+            thread_db, get_cdmods_root(_Config(thread_db), self._game_dir) / "deltas"
         )
 
         # cancel_check passed into launch_and_test must also break

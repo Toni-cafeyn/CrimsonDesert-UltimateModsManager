@@ -13,9 +13,19 @@ Pure-logic module: no Qt imports, no database access.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 
-def resolve_mod_source_path(mod: dict, game_dir: Path) -> Path | None:
+def resolve_mod_source_path(
+    mod: dict,
+    game_dir: Path,
+    config: "Config | None" = None,
+) -> Path | None:
     """Return the best existing source directory for this mod, or None.
 
     `mod` is a row from the mods table (dict-like). `game_dir` is the
@@ -29,7 +39,7 @@ def resolve_mod_source_path(mod: dict, game_dir: Path) -> Path | None:
 
     mod_id = mod.get("id")
     if mod_id is not None:
-        fallback = Path(game_dir) / "CDMods" / "sources" / str(mod_id)
+        fallback = get_cdmods_root(config, Path(game_dir)) / "sources" / str(mod_id)
         if fallback.exists() and fallback.is_dir():
             return fallback
 

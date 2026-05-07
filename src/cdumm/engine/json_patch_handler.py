@@ -49,10 +49,15 @@ import os
 import shutil
 import struct
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from cdumm.archive.paz_parse import parse_pamt, PazEntry
 from cdumm.archive.paz_crypto import decrypt, encrypt, lz4_decompress, lz4_compress
 from cdumm.archive.paz_repack import repack_entry_bytes, _save_timestamps
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -1270,7 +1275,12 @@ def _apply_byte_patches(data: bytearray, changes: list[dict],
     return applied, mismatched, relocated
 
 
-def convert_json_patch_to_paz(patch_data: dict, game_dir: Path, work_dir: Path) -> Path | None:
+def convert_json_patch_to_paz(
+    patch_data: dict,
+    game_dir: Path,
+    work_dir: Path,
+    config: "Config | None" = None,
+) -> Path | None:
     """Convert a JSON patch mod to modified PAZ files.
 
     IMPORTANT: Always uses VANILLA files as the base, not the current game
@@ -1293,7 +1303,7 @@ def convert_json_patch_to_paz(patch_data: dict, game_dir: Path, work_dir: Path) 
                 or patch_data.get("name") or "unknown")
 
     # Use vanilla backups if available, fall back to game dir
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    vanilla_dir = get_cdmods_root(config, game_dir) / "vanilla"
     if not vanilla_dir.exists():
         vanilla_dir = game_dir
         logger.warning("No vanilla backup dir, using game dir (may have shifted offsets)")
@@ -1589,8 +1599,12 @@ def _get_pamt_index(game_dir: Path) -> dict[str, PazEntry]:
     # Try loading from disk cache (self-generated, safe to unpickle)
     import pickle as _pickle
     import time as _time
-    # Cache lives in CDMods if it exists, otherwise next to the PAMTs
-    cdmods = game_dir / "CDMods"
+    # Cache lives in CDMods if it exists, otherwise next to the PAMTs.
+    # NOTE: this is a private cache helper called with both real game_dir
+    # and vanilla_dir; we cannot read config here because we have no db
+    # handle in scope. Falls back to default behavior, which preserves
+    # backward compat for the override case.
+    cdmods = get_cdmods_root(None, game_dir)
     if not cdmods.exists():
         cdmods = game_dir.parent / "CDMods" if game_dir.name == "vanilla" else game_dir
     cdmods.mkdir(parents=True, exist_ok=True)
@@ -1695,7 +1709,8 @@ def _find_pamt_entry(game_file: str, game_dir: Path) -> PazEntry | None:
 
 def import_json_as_entr(patch_data: dict, game_dir: Path, db, deltas_dir: Path,
                         mod_name: str, existing_mod_id: int | None = None,
-                        modinfo: dict | None = None) -> dict | None:
+                        modinfo: dict | None = None,
+                        config: "Config | None" = None) -> dict | None:
     """Import a JSON patch mod as ENTR deltas instead of FULL_COPY PAZ deltas.
 
     This produces entry-level deltas that compose correctly when multiple
@@ -1708,7 +1723,10 @@ def import_json_as_entr(patch_data: dict, game_dir: Path, db, deltas_dir: Path,
     patches = patch_data["patches"]
     logger.info("import_json_as_entr: starting '%s' (%d patches)", mod_name, len(patches))
 
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    if config is None and db is not None:
+        from cdumm.storage.config import Config as _Config
+        config = _Config(db)
+    vanilla_dir = get_cdmods_root(config, game_dir) / "vanilla"
     if not vanilla_dir.exists():
         vanilla_dir = game_dir
         logger.info("import_json_as_entr: no vanilla dir, using game dir")
@@ -2091,6 +2109,7 @@ def import_json_fast(
     patch_data: dict, game_dir: Path, db, mods_dir: Path,
     mod_name: str, existing_mod_id: int | None = None,
     modinfo: dict | None = None,
+    config: "Config | None" = None,
 ) -> dict | None:
     """Fast-import a JSON mod: store the file + lightweight DB entries only.
 
@@ -2103,7 +2122,10 @@ def import_json_fast(
     logger.info("import_json_fast: '%s' (%d patches)", mod_name, len(patches))
 
     # Validate: check all game_files exist in PAMTs
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    if config is None and db is not None:
+        from cdumm.storage.config import Config as _Config
+        config = _Config(db)
+    vanilla_dir = get_cdmods_root(config, game_dir) / "vanilla"
     if not vanilla_dir.exists():
         vanilla_dir = game_dir
 
@@ -2254,6 +2276,7 @@ def process_json_patches_for_overlay(
     vanilla_source_resolver=None,
     errors_out: list[str] | None = None,
     skipped_out: list[dict] | None = None,
+    config: "Config | None" = None,
 ) -> list[tuple[bytes, dict]]:
     """Process a JSON mod's patches at Apply time (mount-time patching).
 
@@ -2294,7 +2317,7 @@ def process_json_patches_for_overlay(
     if not patches:
         return []
 
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    vanilla_dir = get_cdmods_root(config, game_dir) / "vanilla"
     if not vanilla_dir.exists():
         vanilla_dir = game_dir
 

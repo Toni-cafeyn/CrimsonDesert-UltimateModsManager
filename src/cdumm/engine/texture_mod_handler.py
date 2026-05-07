@@ -26,6 +26,12 @@ rendered as black circles. This handler now ships the pixel data.
 import logging
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 from cdumm.archive.pathc_handler import (
     read_pathc, serialize_pathc, add_dds_file, add_folder_recursive,
@@ -91,6 +97,7 @@ def build_texture_overlay(
     dds_entries: list[tuple[str, Path]],
     game_dir: Path,
     work_dir: Path,
+    config: "Config | None" = None,
 ) -> tuple[str, int] | None:
     """Build a full PAZ + PAMT + PATHC overlay for new DDS textures.
 
@@ -130,7 +137,7 @@ def build_texture_overlay(
     # ── Resolve PATHC source: prefer an already-staged copy in work_dir
     # so this helper can be called more than once and results stack. ──
     staged_pathc = work_dir / "meta" / "0.pathc"
-    vanilla_backup = game_dir / "CDMods" / "vanilla" / "meta" / "0.pathc"
+    vanilla_backup = get_cdmods_root(config, game_dir) / "vanilla" / "meta" / "0.pathc"
     game_pathc = game_dir / "meta" / "0.pathc"
 
     if staged_pathc.exists():

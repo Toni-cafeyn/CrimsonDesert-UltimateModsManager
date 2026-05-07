@@ -3,6 +3,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from cdumm.engine.cdmods_paths import get_cdmods_root
 from cdumm.storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -432,7 +433,10 @@ class ModManager:
             snap = self._db.connection.execute(
                 "SELECT file_hash FROM snapshots WHERE file_path = ?", (file_path,)).fetchone()
             if snap is None:
-                vanilla_dir = game_dir / "CDMods" / "vanilla"
+                from cdumm.storage.config import Config as _Config
+                vanilla_dir = (
+                    get_cdmods_root(_Config(self._db), game_dir) / "vanilla"
+                )
                 full_backup = vanilla_dir / file_path.replace("/", os.sep)
                 range_backup = vanilla_dir / (file_path.replace("/", "_") + ".vranges")
                 if full_backup.exists() or range_backup.exists():

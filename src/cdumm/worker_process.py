@@ -16,6 +16,8 @@ import logging
 import sys
 from pathlib import Path
 
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
 
 def _emit(obj: dict) -> None:
     """Write a JSON line to stdout for the parent process to read.
@@ -544,7 +546,11 @@ def _run_check_mods(game_dir: str, db_path: str) -> None:
             if i % 10 == 0:
                 pct = 10 + int((i / max(len(size_rows), 1)) * 70)
                 _emit({"type": "progress", "pct": pct, "msg": f"Checking {fp}"})
-            vanilla_path = game_dir / "CDMods" / "vanilla" / fp.replace("/", os.sep)
+            from cdumm.storage.config import Config as _Config
+            vanilla_path = (
+                get_cdmods_root(_Config(db), game_dir)
+                / "vanilla" / fp.replace("/", os.sep)
+            )
             game_path = game_dir / fp.replace("/", os.sep)
             src = vanilla_path if vanilla_path.exists() else game_path
             if src.exists():

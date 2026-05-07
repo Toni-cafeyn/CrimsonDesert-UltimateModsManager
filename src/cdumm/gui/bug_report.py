@@ -454,7 +454,10 @@ def generate_bug_report(db: Database | None, game_dir: Path | None,
     # ── Storage ────────────────────────────────────────────────────────
     if game_dir:
         body.append("--- STORAGE ---")
-        cdmods_dir = game_dir / "CDMods"
+        from cdumm.engine.cdmods_paths import get_cdmods_root
+        from cdumm.storage.config import Config as _Config
+        cdmods_dir = get_cdmods_root(
+            _Config(db) if db is not None else None, game_dir)
         if cdmods_dir.exists():
             body.append(f"CDMods: {cdmods_dir}")
             for sub in ("vanilla", "deltas", "sources", "overlay"):
@@ -557,8 +560,15 @@ def generate_bug_report(db: Database | None, game_dir: Path | None,
         # PAZ Mods
         body.append("--- PAZ MODS ---")
         try:
-            deltas_dir = (game_dir / "CDMods" / "deltas") if game_dir else None
-            vanilla_dir = (game_dir / "CDMods" / "vanilla") if game_dir else None
+            from cdumm.engine.cdmods_paths import get_cdmods_root
+            from cdumm.storage.config import Config as _Config
+            _cdmods = (
+                get_cdmods_root(
+                    _Config(db) if db is not None else None, game_dir)
+                if game_dir else None
+            )
+            deltas_dir = (_cdmods / "deltas") if _cdmods else None
+            vanilla_dir = (_cdmods / "vanilla") if _cdmods else None
             cursor = db.connection.execute(
                 "SELECT id, name, enabled, priority, version, nexus_mod_id, "
                 "import_date, configurable, source_path, applied, drop_name, "

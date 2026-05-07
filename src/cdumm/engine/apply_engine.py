@@ -16,8 +16,14 @@ import logging
 import struct
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
+
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 
 def persist_skip_summary(
@@ -86,7 +92,10 @@ def persist_skip_summary(
     db_connection.commit()
 
 
-def invalidate_apply_fingerprint(game_dir: Path) -> None:
+def invalidate_apply_fingerprint(
+    game_dir: Path,
+    config: "Config | None" = None,
+) -> None:
     """Remove ``CDMods/.apply_fingerprint`` so the next Apply genuinely
     re-runs the pipeline.
 
@@ -96,7 +105,7 @@ def invalidate_apply_fingerprint(game_dir: Path) -> None:
     fast-paths 'Already up to date'. Re-import call sites must invoke
     this after the DB commit. Idempotent (no-op if the file is missing).
     """
-    fp_path = game_dir / "CDMods" / ".apply_fingerprint"
+    fp_path = get_cdmods_root(config, game_dir) / ".apply_fingerprint"
     try:
         if fp_path.exists():
             fp_path.unlink()
@@ -1408,13 +1417,15 @@ class ApplyWorker(QObject):
         # Fast-path: check if game files already match the current mod state
         import json as _json_mod
         fingerprint = self._compute_apply_fingerprint()
-        fp_path = self._game_dir / "CDMods" / ".apply_fingerprint"
+        from cdumm.storage.config import Config as _Config
+        _cdmods = get_cdmods_root(_Config(self._db), self._game_dir)
+        fp_path = _cdmods / ".apply_fingerprint"
         try:
             if fp_path.exists():
                 stored = fp_path.read_text(encoding="utf-8").strip()
                 if stored == fingerprint:
                     # Verify overlay PAZ is intact
-                    cache_json = self._game_dir / "CDMods" / ".overlay_cache.json"
+                    cache_json = _cdmods / ".overlay_cache.json"
                     if cache_json.exists():
                         manifest = _json_mod.loads(cache_json.read_text(encoding="utf-8"))
                         overlay_dir = manifest.get("_overlay_dir", "")
@@ -1468,7 +1479,9 @@ class ApplyWorker(QObject):
 
         # Pre-load overlay cache before orphan cleanup deletes the previous overlay
         from cdumm.archive.overlay_builder import _load_overlay_cache
-        self._cached_overlay = _load_overlay_cache(self._game_dir)
+        from cdumm.storage.config import Config as _Config
+        self._cached_overlay = _load_overlay_cache(
+            self._game_dir, config=_Config(self._db))
         self._overlay_dir_name: str | None = None
 
         # Also ensure PAMTs are backed up for directories with entry deltas
@@ -1739,6 +1752,7 @@ class ApplyWorker(QObject):
                         "target file(s) from vanilla...")
                     patch_errors: list[str] = []
                     patch_skips: list[dict] = []
+                    from cdumm.storage.config import Config as _Config
                     entries = process_json_patches_for_overlay(
                         0,  # pseudo mod_id — no single mod owns this
                         str(synth_path), self._game_dir,
@@ -1746,7 +1760,8 @@ class ApplyWorker(QObject):
                         custom_values=None,
                         vanilla_source_resolver=resolver,
                         errors_out=patch_errors,
-                        skipped_out=patch_skips)
+                        skipped_out=patch_skips,
+                        config=_Config(self._db))
                     # JMM-parity UX: surface the per-patch skip details
                     # to the user. CDUMM previously logged these at
                     # debug-level only, so users with mods that
@@ -1888,7 +1903,9 @@ class ApplyWorker(QObject):
                     }
                     for (mod_id, mod_name, kind, dp, fp, prio) in xml_rows
                 ]
-                xml_entries = process_xml_patches_for_overlay(items, self._game_dir)
+                from cdumm.storage.config import Config as _Config
+                xml_entries = process_xml_patches_for_overlay(
+                    items, self._game_dir, config=_Config(self._db))
                 # Stamp CDUMM priority onto each XML overlay entry so
                 # the merge function can resolve mixed JSON+XML
                 # collisions by priority instead of feed order (C-H6).
@@ -1946,8 +1963,9 @@ class ApplyWorker(QObject):
                     }
                     for (mod_id, mod_name, kind, dp, fp, prio) in css_rows
                 ]
+                from cdumm.storage.config import Config as _Config
                 css_entries = process_css_patches_for_overlay(
-                    items, self._game_dir)
+                    items, self._game_dir, config=_Config(self._db))
                 self._overlay_entries.extend(css_entries)
                 if css_entries:
                     logger.info(
@@ -1977,8 +1995,9 @@ class ApplyWorker(QObject):
                     }
                     for (mod_id, mod_name, kind, dp, fp, prio) in html_rows
                 ]
+                from cdumm.storage.config import Config as _Config
                 html_entries = process_html_patches_for_overlay(
-                    items, self._game_dir)
+                    items, self._game_dir, config=_Config(self._db))
                 self._overlay_entries.extend(html_entries)
                 if html_entries:
                     logger.info(
@@ -2119,7 +2138,11 @@ class ApplyWorker(QObject):
                 # Save overlay cache for incremental rebuild on next Apply
                 if hasattr(build_overlay, '_last_cache') and build_overlay._last_cache:
                     from cdumm.archive.overlay_builder import _save_overlay_cache
-                    _save_overlay_cache(self._game_dir, overlay_dir, build_overlay._last_cache)
+                    from cdumm.storage.config import Config as _Config
+                    _save_overlay_cache(
+                        self._game_dir, overlay_dir,
+                        build_overlay._last_cache,
+                        config=_Config(self._db))
 
                 # Register DDS entries in PATHC (meta/0.pathc) so the game
                 # can find textures via its texture path index.
@@ -2374,7 +2397,11 @@ class ApplyWorker(QObject):
 
             # Save fingerprint so next Apply can skip if nothing changed
             try:
-                fp_path = self._game_dir / "CDMods" / ".apply_fingerprint"
+                from cdumm.storage.config import Config as _Config
+                fp_path = (
+                    get_cdmods_root(_Config(self._db), self._game_dir)
+                    / ".apply_fingerprint"
+                )
                 fp_path.write_text(fingerprint, encoding="utf-8")
             except Exception:
                 pass
@@ -3282,7 +3309,10 @@ class ApplyWorker(QObject):
         from cdumm.engine.delta_engine import apply_delta_from_file
 
         pamt_dir = file_path.split("/")[0]
-        vanilla_dir = self._game_dir / "CDMods" / "vanilla"
+        from cdumm.storage.config import Config as _Config
+        vanilla_dir = (
+            get_cdmods_root(_Config(self._db), self._game_dir) / "vanilla"
+        )
         base_dir = vanilla_dir if vanilla_dir.exists() else self._game_dir
 
         # ── Step 1: Find which deltas overlap at the same PAMT entry ──
@@ -4275,7 +4305,11 @@ class RevertWorker(QObject):
         """Revert all mod-affected files to vanilla using range or full backups."""
         # Invalidate apply fingerprint
         try:
-            fp_path = self._game_dir / "CDMods" / ".apply_fingerprint"
+            from cdumm.storage.config import Config as _Config
+            fp_path = (
+                get_cdmods_root(_Config(self._db), self._game_dir)
+                / ".apply_fingerprint"
+            )
             if fp_path.exists():
                 fp_path.unlink()
         except Exception:

@@ -30,9 +30,14 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from lxml import etree
+
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -812,6 +817,7 @@ def _merge_element(merge_el, parent_hint, tree, log) -> tuple[int, int, int]:
 def process_xml_patches_for_overlay(
     patch_items: list[dict],
     game_dir: Path,
+    config: "Config | None" = None,
 ) -> list[tuple[bytes, dict]]:
     """Apply all XML patches / merges against the vanilla XMLs they target
     and emit ``(content_bytes, metadata)`` tuples ready for the overlay
@@ -837,7 +843,7 @@ def process_xml_patches_for_overlay(
         _find_pamt_entry, _extract_from_paz,
     )
 
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    vanilla_dir = get_cdmods_root(config, game_dir) / "vanilla"
     if not vanilla_dir.exists():
         vanilla_dir = game_dir
 

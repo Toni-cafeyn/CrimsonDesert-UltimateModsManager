@@ -24,7 +24,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from cdumm.engine.cdmods_paths import get_cdmods_root
 from cdumm.engine.mod_source_path import resolve_mod_source_path
+from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +52,10 @@ def reimport_candidates(db, game_dir: Path) -> tuple[list[dict[str, Any]], list[
 
     reimportable: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    config = Config(db) if db is not None else None
     for row in rows:
         mod = {"id": row[0], "name": row[1], "source_path": row[2]}
-        resolved = resolve_mod_source_path(mod, game_dir)
+        resolved = resolve_mod_source_path(mod, game_dir, config=config)
         if resolved is not None:
             reimportable.append(mod)
         else:
@@ -63,7 +66,7 @@ def reimport_candidates(db, game_dir: Path) -> tuple[list[dict[str, Any]], list[
             # the mods) so we want hard evidence per row.
             sp = row[2]
             sp_exists = bool(sp) and Path(sp).exists()
-            fallback = (Path(game_dir) / "CDMods" / "sources" / str(row[0])
+            fallback = (get_cdmods_root(config, Path(game_dir)) / "sources" / str(row[0])
                         if game_dir is not None else None)
             fb_exists = (fallback is not None and fallback.exists()
                          and fallback.is_dir())

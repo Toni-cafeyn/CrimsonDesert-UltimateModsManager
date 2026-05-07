@@ -43,7 +43,12 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -813,7 +818,8 @@ def _decode_utf8(data: bytes) -> str:
 
 
 def process_html_patches_for_overlay(
-        patch_items: list[dict], game_dir) -> list[tuple[bytes, dict]]:
+        patch_items: list[dict], game_dir,
+        config: "Config | None" = None) -> list[tuple[bytes, dict]]:
     """Apply all *.html.patch / *.html.merge mods against the HTML
     files they target and emit (content_bytes, metadata) tuples ready
     for the overlay builder.
@@ -830,7 +836,7 @@ def process_html_patches_for_overlay(
     )
 
     game_dir = Path(game_dir)
-    vanilla_dir = game_dir / "CDMods" / "vanilla"
+    vanilla_dir = get_cdmods_root(config, game_dir) / "vanilla"
     if not vanilla_dir.exists():
         vanilla_dir = game_dir
 

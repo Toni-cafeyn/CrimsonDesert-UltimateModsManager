@@ -12,6 +12,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+from cdumm.engine.cdmods_paths import get_cdmods_root
 from cdumm.storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -439,7 +440,11 @@ class SnapshotWorker(QObject):
         # stale (from a previous game version). Delete them — the user just
         # verified through Steam so the game files ARE vanilla now.
         import shutil as _shutil
-        vanilla_dir = self._game_dir / "CDMods" / "vanilla"
+        from cdumm.storage.config import Config as _Config
+        vanilla_dir = (
+            get_cdmods_root(_Config(self._thread_db), self._game_dir)
+            / "vanilla"
+        )
         if vanilla_dir.exists() and any(vanilla_dir.rglob("*")):
             stale_backups = []
             for backup in vanilla_dir.rglob("*"):

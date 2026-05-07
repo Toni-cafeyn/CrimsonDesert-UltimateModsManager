@@ -910,8 +910,13 @@ class ModCheckWorker(QObject):
                     "FROM mod_vanilla_sizes vs JOIN mods m ON vs.mod_id = m.id "
                     "WHERE m.enabled = 1"
                 ).fetchall()
+                from cdumm.engine.cdmods_paths import get_cdmods_root
+                from cdumm.storage.config import Config as _Config
+                _vanilla_root = (
+                    get_cdmods_root(_Config(db), self._game_dir) / "vanilla"
+                )
                 for mod_name, fp, expected_size in size_rows:
-                    vanilla_path = self._game_dir / "CDMods" / "vanilla" / fp.replace("/", os.sep)
+                    vanilla_path = _vanilla_root / fp.replace("/", os.sep)
                     game_path = self._game_dir / fp.replace("/", os.sep)
                     src = vanilla_path if vanilla_path.exists() else game_path
                     if src.exists():

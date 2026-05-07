@@ -440,7 +440,12 @@ def main() -> int:
         app.processEvents()
 
     game_path = Path(game_dir)
-    cdmods_dir = game_path / "CDMods"
+    # DB bootstrap always uses the default CDMods location — the
+    # cdmods_path override lives INSIDE this DB, so we cannot read it
+    # before the DB is open. Override only affects derivative folders
+    # (vanilla / deltas / sources) once the engine is running.
+    from cdumm.engine.cdmods_paths import get_cdmods_root
+    cdmods_dir = get_cdmods_root(None, game_path)
     cdmods_dir.mkdir(parents=True, exist_ok=True)
     new_db = cdmods_dir / "cdumm.db"
 

@@ -11,10 +11,14 @@ import bisect
 import logging
 import struct
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from cdumm.archive.hashlittle import hashlittle
 from cdumm.archive.paz_crypto import lz4_compress
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +298,11 @@ def _reset_pathc_cache() -> None:
     _ext_comp_cache.clear()
 
 
-def _build_ext_comp_list(pamt_dir: str, game_dir) -> list[tuple[str, int]]:
+def _build_ext_comp_list(
+    pamt_dir: str,
+    game_dir,
+    config: "Config | None" = None,
+) -> list[tuple[str, int]]:
     """Return a list of ``(filename, comp_type)`` from the vanilla PAMT
     for ``pamt_dir``. Cached per pamt_dir per apply.
 
@@ -309,7 +317,7 @@ def _build_ext_comp_list(pamt_dir: str, game_dir) -> list[tuple[str, int]]:
 
     out: list[tuple[str, int]] = []
     game_dir = Path(game_dir)
-    for base in [game_dir / "CDMods" / "vanilla", game_dir]:
+    for base in [get_cdmods_root(config, game_dir) / "vanilla", game_dir]:
         pamt_path = base / pamt_dir / "0.pamt"
         if not pamt_path.exists():
             continue
@@ -326,7 +334,11 @@ def _build_ext_comp_list(pamt_dir: str, game_dir) -> list[tuple[str, int]]:
     return out
 
 
-def _build_full_path_map(pamt_dir: str, game_dir) -> dict[str, str]:
+def _build_full_path_map(
+    pamt_dir: str,
+    game_dir,
+    config: "Config | None" = None,
+) -> dict[str, str]:
     """Build a map of flattened_path -> full_folder_path from the vanilla PAMT.
 
     The PAMT stores files with full hierarchical folder paths in its folder
@@ -341,7 +353,7 @@ def _build_full_path_map(pamt_dir: str, game_dir) -> dict[str, str]:
     game_dir = Path(game_dir)
     result = {}
 
-    for base in [game_dir / "CDMods" / "vanilla", game_dir]:
+    for base in [get_cdmods_root(config, game_dir) / "vanilla", game_dir]:
         pamt_path = base / pamt_dir / "0.pamt"
         if not pamt_path.exists():
             continue
@@ -452,7 +464,10 @@ OVERLAY_CACHE_SCHEMA = 2  # bump whenever the overlay byte layout changes;
 # v2 = JMM BuildPartialDdsPayload parity for DDS entries.
 
 
-def _load_overlay_cache(game_dir) -> dict:
+def _load_overlay_cache(
+    game_dir,
+    config: "Config | None" = None,
+) -> dict:
     """Load the overlay cache manifest from the previous Apply.
 
     Returns {entry_path: {offset, comp_size, decomp_size, flags, delta_hash, overlay_dir}}
@@ -461,7 +476,7 @@ def _load_overlay_cache(game_dir) -> dict:
     """
     import json
     from pathlib import Path
-    cache_path = Path(game_dir) / "CDMods" / ".overlay_cache.json"
+    cache_path = get_cdmods_root(config, Path(game_dir)) / ".overlay_cache.json"
     if not cache_path.exists():
         return {}, None, None
     try:
@@ -486,11 +501,16 @@ def _load_overlay_cache(game_dir) -> dict:
         return {}, None, None
 
 
-def _save_overlay_cache(game_dir, overlay_dir, cache_entries: dict):
+def _save_overlay_cache(
+    game_dir,
+    overlay_dir,
+    cache_entries: dict,
+    config: "Config | None" = None,
+):
     """Save overlay cache manifest for incremental rebuild."""
     import json
     from pathlib import Path
-    cache_path = Path(game_dir) / "CDMods" / ".overlay_cache.json"
+    cache_path = get_cdmods_root(config, Path(game_dir)) / ".overlay_cache.json"
     manifest = dict(cache_entries)
     manifest["_overlay_dir"] = overlay_dir
     manifest["_schema"] = OVERLAY_CACHE_SCHEMA
@@ -501,7 +521,12 @@ def _save_overlay_cache(game_dir, overlay_dir, cache_entries: dict):
         logger.debug("Overlay cache save failed: %s", e)
 
 
-def _get_vanilla_pabgh(pamt_dir: str, pabgb_entry_path: str, game_dir) -> bytes | None:
+def _get_vanilla_pabgh(
+    pamt_dir: str,
+    pabgb_entry_path: str,
+    game_dir,
+    config: "Config | None" = None,
+) -> bytes | None:
     """Extract the vanilla PABGH file that corresponds to a PABGB entry.
 
     Looks up the sibling .pabgh in the same PAMT directory and extracts it
@@ -522,7 +547,7 @@ def _get_vanilla_pabgh(pamt_dir: str, pabgb_entry_path: str, game_dir) -> bytes 
     game_dir = Path(game_dir)
 
     # Search in vanilla backup first, then game dir
-    for base in [game_dir / "CDMods" / "vanilla", game_dir]:
+    for base in [get_cdmods_root(config, game_dir) / "vanilla", game_dir]:
         pamt_path = base / pamt_dir / "0.pamt"
         if not pamt_path.exists():
             continue

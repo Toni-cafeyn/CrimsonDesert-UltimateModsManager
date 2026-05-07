@@ -13,15 +13,25 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
 _ARCHIVE_EXTS = (".rar", ".zip", ".7z")
 
 
-def cache_root_for(game_dir: Path, mod_id: int) -> Path:
+def cache_root_for(
+    game_dir: Path,
+    mod_id: int,
+    config: "Config | None" = None,
+) -> Path:
     """Return CDMods/sources/_swap_cache/<mod_id>/ under game_dir."""
-    return Path(game_dir) / "CDMods" / "sources" / "_swap_cache" / str(mod_id)
+    return get_cdmods_root(config, Path(game_dir)) / "sources" / "_swap_cache" / str(mod_id)
 
 
 def resolve_cfg_src(

@@ -19,11 +19,16 @@ import logging
 import shutil
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import struct
 
 from cdumm.archive.paz_parse import parse_pamt, PazEntry
 from cdumm.archive.paz_repack import repack_entry_bytes, _save_timestamps
+from cdumm.engine.cdmods_paths import get_cdmods_root
+
+if TYPE_CHECKING:
+    from cdumm.storage.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +105,12 @@ def detect_crimson_browser(path: Path) -> dict | None:
     return None
 
 
-def convert_to_paz_mod(manifest: dict, game_dir: Path, work_dir: Path) -> Path | None:
+def convert_to_paz_mod(
+    manifest: dict,
+    game_dir: Path,
+    work_dir: Path,
+    config: "Config | None" = None,
+) -> Path | None:
     """Convert a Crimson Browser mod to a standard PAZ mod directory.
 
     Copies vanilla PAZ files, repacks each loose file into the copy,
@@ -251,7 +261,7 @@ def convert_to_paz_mod(manifest: dict, game_dir: Path, work_dir: Path) -> Path |
 
         # Use vanilla PAMT for entry lookup — the current game PAMT may have
         # modified comp_sizes from other mods, which would produce wrong offsets.
-        vanilla_pamt = game_dir / "CDMods" / "vanilla" / dir_name / "0.pamt"
+        vanilla_pamt = get_cdmods_root(config, game_dir) / "vanilla" / dir_name / "0.pamt"
         pamt_path = vanilla_pamt if vanilla_pamt.exists() else game_paz_dir / "0.pamt"
         # Always use game directory for PAZ file paths — vanilla backup may
         # not have all PAZ files (only those that were modified and backed up).
@@ -314,7 +324,7 @@ def convert_to_paz_mod(manifest: dict, game_dir: Path, work_dir: Path) -> Path |
             paz_src = Path(entry.paz_file)
             if str(paz_src) not in paz_copies:
                 # Prefer vanilla backup over current game PAZ
-                vanilla_paz = game_dir / "CDMods" / "vanilla" / dir_name / paz_src.name
+                vanilla_paz = get_cdmods_root(config, game_dir) / "vanilla" / dir_name / paz_src.name
                 copy_src = vanilla_paz if vanilla_paz.exists() else paz_src
                 paz_dst = work_dir / dir_name / paz_src.name
                 paz_dst.parent.mkdir(parents=True, exist_ok=True)
