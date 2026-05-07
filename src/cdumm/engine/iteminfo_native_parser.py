@@ -1666,10 +1666,23 @@ _ITEM_FIELDS = [
 ]
 
 
+# Lantern records (equip_type_info == LANTERN_EQ_TYPE) carry a 12-byte
+# (u32, u32, u32) class-metadata block between material_match_info and
+# item_desc. Per RESIDUAL_10_findings.md, this is the only equip_type
+# in the fixture that triggers a conditional struct here. Round-trip
+# the three u32s as lantern_unk_a/b/c on the record dict.
+LANTERN_EQ_TYPE = 0x97C2FAE8
+
+
 def _read_item(r: _Reader) -> dict:
     out: dict = {}
     for spec in _ITEM_FIELDS:
         name, kind = spec[0], spec[1]
+        # Conditional 12-byte block before item_desc on lantern records.
+        if name == "item_desc" and out.get("equip_type_info") == LANTERN_EQ_TYPE:
+            out["lantern_unk_a"] = r.u32()
+            out["lantern_unk_b"] = r.u32()
+            out["lantern_unk_c"] = r.u32()
         if kind == "u8":
             out[name] = r.u8()
         elif kind == "u16":
@@ -1813,6 +1826,12 @@ def _read_item(r: _Reader) -> dict:
 def _write_item(w: _Writer, it: dict) -> None:
     for spec in _ITEM_FIELDS:
         name, kind = spec[0], spec[1]
+        # Symmetric lantern conditional: emit 12 bytes only when
+        # equip_type_info matches. Read values from the record dict.
+        if name == "item_desc" and it.get("equip_type_info") == LANTERN_EQ_TYPE:
+            w.u32(it["lantern_unk_a"])
+            w.u32(it["lantern_unk_b"])
+            w.u32(it["lantern_unk_c"])
         v = it[name]
         if kind == "u8":
             w.u8(v)
