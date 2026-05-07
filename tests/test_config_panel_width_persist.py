@@ -173,3 +173,21 @@ def test_invalid_saved_width_falls_back_to_default(qtbot, app, db):
     qtbot.addWidget(panel)
     panel.set_db(db)
     assert panel._PANEL_WIDTH == 640  # default
+
+
+def test_empty_string_saved_width_falls_back_to_default(qtbot, app, db):
+    """An empty-string saved value (e.g. from a stray Config.set with
+    empty arg) must fall back to the default rather than skip
+    restoration silently. The old code used ``if saved:`` which
+    short-circuits on '' — so a corrupted empty value was treated the
+    same as missing, masking the bug. The new ``if saved is not None``
+    forces int() conversion which raises ValueError and lands in the
+    fallback branch."""
+    from cdumm.gui.components.config_panel import ConfigPanel
+    from cdumm.storage.config import Config
+
+    Config(db).set("config_panel_width", "")
+    panel = ConfigPanel()
+    qtbot.addWidget(panel)
+    panel.set_db(db)
+    assert panel._PANEL_WIDTH == 640  # default, no crash

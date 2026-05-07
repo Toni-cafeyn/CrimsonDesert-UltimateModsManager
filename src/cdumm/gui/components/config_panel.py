@@ -511,7 +511,14 @@ class ConfigPanel(QWidget):
         try:
             from cdumm.storage.config import Config
             saved = Config(db).get("config_panel_width")
-            if saved:
+            # Use ``is not None`` rather than truthy check: an empty
+            # string saved value (e.g. from a stray Config.set("", ""))
+            # would previously skip restoration entirely. Now we hand
+            # any non-None value to int(); int("") raises ValueError
+            # and we fall through to leave the default in place — which
+            # is the correct behaviour for empty strings too, but via
+            # the explicit error path instead of the truthy short-circuit.
+            if saved is not None:
                 try:
                     width = int(saved)
                     self._PANEL_WIDTH = max(
