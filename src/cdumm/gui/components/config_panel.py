@@ -195,6 +195,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     CaptionLabel,
     PrimaryPushButton,
+    RadioButton,
     SingleDirectionScrollArea,
     SubtitleLabel,
     isDarkTheme,
@@ -276,6 +277,12 @@ class ConfigPanel(QWidget):
         self._variants_meta: list[dict] = []
         self._variant_widgets: dict[int, QCheckBox | QRadioButton] = {}
         self._variant_initial: dict[int, bool] = {}
+        # Preset-selector state (populated by _add_preset_selector when
+        # detect_preset_groups returns a non-None mapping). Task 1.3 will
+        # consume these to map a clicked radio back to the patch indices
+        # that its tag covers.
+        self._preset_radio_group: QButtonGroup | None = None
+        self._preset_groups: dict[str, list[int]] | None = None
 
         self._anim = QPropertyAnimation(self, b"maximumWidth")
         self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
@@ -404,6 +411,11 @@ class ConfigPanel(QWidget):
         self._value_inputs.clear()
         self._initial_values.clear()
         self._variant_mode = False
+        # Reset preset-selector refs every open. Detection runs again
+        # below; a flat-mod open after a preset-mod open must clear the
+        # stale QButtonGroup.
+        self._preset_radio_group = None
+        self._preset_groups = None
         self._apply_btn.setVisible(False)
 
         # Header
@@ -424,6 +436,14 @@ class ConfigPanel(QWidget):
         # CONFIGURATION section
         if patches:
             self._add_section_header(tr("config_panel.section_config"))
+            # Preset selector: when every label carries a [Tag] prefix
+            # forming a recognisable preset family (percent / known
+            # vocab / N-equal-sized groups), show a radio row above the
+            # per-patch toggles. The radios themselves do nothing yet;
+            # Task 1.3 wires them to actually drive the toggles.
+            preset_groups = detect_preset_groups(patches)
+            if preset_groups is not None:
+                self._add_preset_selector(preset_groups, current_preset=None)
             for i, p in enumerate(patches):
                 ev = p.get("editable_value")
                 if ev and isinstance(ev, dict) and "type" in ev:
@@ -535,6 +555,60 @@ class ConfigPanel(QWidget):
                 item.widget().deleteLater()
             elif item.layout():
                 ConfigPanel._clear_layout(item.layout())
+
+    def _add_preset_selector(
+        self,
+        groups: dict[str, list[int]],
+        current_preset: str | None = None,
+    ) -> None:
+        """Render a horizontal radio row at the top of the body, one
+        radio per preset group plus a final 'Custom' radio.
+
+        - Each radio's text is the tag (e.g. "0%", "Off", "Lazy Run").
+        - The final 'Custom' radio is selected by default. Custom means
+          manual per-checkbox control (Task 1.3 will wire this).
+        - When ``current_preset`` matches a tag in ``groups``, that
+          radio is checked instead of Custom (used in Task 1.4 for
+          restoring the last selection).
+        - The ``QButtonGroup`` is stored at ``self._preset_radio_group``
+          so Task 1.3 can connect to its ``buttonClicked`` signal.
+        - The group dict is stashed at ``self._preset_groups`` so Task
+          1.3 can look up the patch indices for each tag.
+        """
+        # The button group is parented to ``self`` so it survives the
+        # body-clear cycle on the next show_mod call without leaking;
+        # we reset the attr explicitly at the start of show_mod.
+        self._preset_groups = dict(groups)
+        button_group = QButtonGroup(self)
+        button_group.setExclusive(True)
+        self._preset_radio_group = button_group
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 4, 0, 8)
+        row.setSpacing(12)
+
+        match_tag = current_preset if current_preset in groups else None
+        for tag in groups.keys():
+            rb = RadioButton(tag)
+            if match_tag is not None and tag == match_tag:
+                rb.setChecked(True)
+            button_group.addButton(rb)
+            row.addWidget(rb)
+
+        custom_rb = RadioButton("Custom")
+        # Custom is the default fallback when no current_preset matches
+        # a known tag — i.e. on a fresh open before Task 1.4 lands the
+        # restore-from-DB hook.
+        if match_tag is None:
+            custom_rb.setChecked(True)
+        button_group.addButton(custom_rb)
+        row.addWidget(custom_rb)
+        row.addStretch()
+
+        container = QWidget()
+        container.setLayout(row)
+        container.setStyleSheet("background: transparent;")
+        self._body_layout.addWidget(container)
 
     def _add_section_header(self, text: str) -> None:
         header = CaptionLabel(text)
