@@ -599,6 +599,161 @@ def _detect_plain_xml_replacements(extracted_dir: Path) -> list[dict]:
     return results
 
 
+def _detect_raw_file_replacements_via_pamt(
+    extracted_dir: Path,
+    game_dir: Path,
+) -> list[tuple]:
+    """Find every file in ``extracted_dir`` that maps to a real PAMT
+    entry inside one of the game's PAZ archives.
+
+    Returns a list of ``(pamt_relative_path, source_file_path, PazEntry)``
+    tuples, one per matched file. Anything that doesn't resolve to a
+    PAMT entry (readmes, screenshots, license text, non-game cruft)
+    is silently dropped so the caller can use the result as the
+    definitive "this is a manifest-less loose-file mod" check.
+
+    Bug 2026-05-09 (Faisal verified, mods 1299 Aeserion mesh and
+    2406 Healthbar): the existing ``_match_game_files`` only knows
+    PAZ-archive file paths (``NNNN/N.paz`` shape) so mods that ship
+    raw replacement files at the engine's INNER path layout (e.g.
+    ``character/.../foo.pac``, ``gamedata/binary__/.../skill.pabgb``)
+    fall through to the generic 'no recognized format' rejection
+    even though every byte the user dropped corresponds to a real
+    PAZ entry.
+
+    For each file the helper tries every suffix of the relative
+    path, so authors who nest the game tree under a wrapper folder
+    (``MyMod/character/...``) still get a hit. The first suffix
+    that resolves wins.
+    """
+    from cdumm.engine.json_patch_handler import _find_pamt_entry
+
+    matches: list[tuple] = []
+    for f in extracted_dir.rglob("*"):
+        if not f.is_file():
+            continue
+        try:
+            rel_parts = f.relative_to(extracted_dir).parts
+        except ValueError:
+            continue
+        # Try each suffix from longest (full relative path) to
+        # shortest (just the filename). PAMT entries are full inner
+        # paths so a longer match is more specific and gets first
+        # crack.
+        for i in range(len(rel_parts)):
+            candidate = "/".join(rel_parts[i:])
+            try:
+                entry = _find_pamt_entry(candidate, game_dir)
+            except Exception:  # noqa: BLE001 — defensive, lookup
+                # bugs must not abort the whole import.
+                entry = None
+            if entry is not None:
+                matches.append((candidate, f, entry))
+                break
+    return matches
+
+
+def _import_raw_file_replacements_as_entr(
+    matches: list[tuple],
+    game_dir: Path,
+    db: "Database",
+    deltas_dir: Path,
+    mod_name: str,
+    existing_mod_id: int | None = None,
+    modinfo: dict | None = None,
+) -> "ModImportResult":
+    """Persist raw-file PAMT-resolved matches as ENTR deltas.
+
+    Each tuple from ``_detect_raw_file_replacements_via_pamt`` becomes
+    one ENTR delta keyed on the entry's path inside the PAZ archive,
+    with the user-dropped file's full content as the new bytes. The
+    storage path mirrors what ``import_json_as_entr`` already does for
+    JSON byte-patch mods so apply-time composition works identically.
+    """
+    from cdumm.engine.delta_engine import save_entry_delta
+    from cdumm.engine.version_detector import detect_game_version
+
+    result = ModImportResult(_prettify(mod_name))
+
+    priority = db.connection.execute(
+        "SELECT COALESCE(MAX(priority), 0) + 1 FROM mods").fetchone()[0]
+    author = (modinfo or {}).get("author")
+    version = (modinfo or {}).get("version")
+    description = (modinfo or {}).get("description")
+    try:
+        game_ver_hash = detect_game_version(game_dir)
+    except Exception:  # noqa: BLE001 — version stamp is best-effort
+        game_ver_hash = None
+
+    if existing_mod_id:
+        mod_id = existing_mod_id
+        db.connection.execute(
+            "DELETE FROM mod_deltas WHERE mod_id = ?", (mod_id,))
+        if game_ver_hash:
+            db.connection.execute(
+                "UPDATE mods SET game_version_hash = ? WHERE id = ?",
+                (game_ver_hash, mod_id))
+        import shutil
+        old_delta_dir = deltas_dir / str(mod_id)
+        if old_delta_dir.exists():
+            shutil.rmtree(old_delta_dir)
+    else:
+        cursor = db.connection.execute(
+            "INSERT INTO mods (name, mod_type, priority, author, "
+            "version, description, game_version_hash) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (_prettify(mod_name), "paz", priority, author, version,
+             description, game_ver_hash))
+        mod_id = cursor.lastrowid
+
+    changed_files: list[str] = []
+    for pamt_path, source_file, entry in matches:
+        modified_bytes = source_file.read_bytes()
+        pamt_dir = _derive_pamt_dir(entry.paz_file)
+        paz_file_path = f"{pamt_dir}/{entry.paz_index}.paz"
+        metadata = {
+            "pamt_dir": pamt_dir,
+            "entry_path": entry.path,
+            "paz_index": entry.paz_index,
+            "compression_type": entry.compression_type,
+            "flags": entry.flags,
+            "vanilla_offset": entry.offset,
+            "vanilla_comp_size": entry.comp_size,
+            "vanilla_orig_size": entry.orig_size,
+            "encrypted": entry.encrypted,
+        }
+        # Tag the entry as semantically parseable when it is, so the
+        # apply-time conflict detector picks the right strategy.
+        try:
+            from cdumm.semantic.parser import identify_table_from_path
+            sem_table = identify_table_from_path(entry.path)
+            if sem_table:
+                metadata["semantic_table"] = sem_table
+        except Exception:  # noqa: BLE001 — semantic tagging is best-effort
+            pass
+
+        safe_name = entry.path.replace("/", "_") + ".entr"
+        delta_path = deltas_dir / str(mod_id) / safe_name
+        save_entry_delta(modified_bytes, metadata, delta_path)
+
+        db.connection.execute(
+            "INSERT INTO mod_deltas (mod_id, file_path, delta_path, "
+            "byte_start, byte_end, entry_path) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (mod_id, paz_file_path, str(delta_path),
+             entry.offset, entry.offset + entry.comp_size, entry.path))
+        changed_files.append(entry.path)
+
+    db.connection.commit()
+    logger.info(
+        "Raw file replacement mod imported: id=%d files=%d (%s)",
+        mod_id, len(matches), mod_name)
+
+    result.changed_files = changed_files
+    result.mod_id = mod_id
+    return result
+
+
 def _import_og_xml_as_mod(
     og_xml: list[dict],
     game_dir: Path,
@@ -4054,6 +4209,25 @@ def _process_extracted_files(
     matches = _match_game_files(extracted_dir, game_dir, snapshot)
     _stage("match_game_files")
     if not matches:
+        # Last-chance fallback before rejecting: try resolving every
+        # file in the drop against the game's PAMT entries directly.
+        # Catches manifest-less loose-file mods that ship raw
+        # replacement files at the engine's INNER path layout
+        # (character/.../foo.pac, gamedata/binary__/.../skill.pabgb,
+        # etc.) — the JMM-supported pattern that ``_match_game_files``
+        # was missing because its snapshot index only knows
+        # PAZ-archive paths. Verified 2026-05-09 against mod 1299
+        # Aeserion mesh and mod 2406 Healthbar Always On.
+        raw_matches = _detect_raw_file_replacements_via_pamt(
+            extracted_dir, game_dir)
+        _stage("raw_file_pamt_match")
+        if raw_matches:
+            return _import_raw_file_replacements_as_entr(
+                raw_matches, game_dir, db, deltas_dir,
+                mod_name=mod_name,
+                existing_mod_id=existing_mod_id,
+                modinfo=modinfo,
+            )
         # Build a short inventory of what we DID see so the user (and
         # we, when they paste the error) can tell what's wrong. Most
         # "unrecognized folder" reports have the mod in a non-standard
