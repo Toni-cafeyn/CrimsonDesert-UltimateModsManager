@@ -18,6 +18,13 @@ _UNRELEASED_NOTES: list[str] = []
 
 CHANGELOG = [
     {
+        "version": "3.2.14",
+        "date": "2026-05-09",
+        "notes": [
+            "<b>Hotfix: Format 3 iteminfo mods with nested-path intents now actually import on v3.2.13's writer.</b> The v3.2.11 release added an iteminfo nested-path whitelist to the validator's nested-write check, intending to let <code>prefab_data_list[N].x</code>, <code>drop_default_data.x</code>, and <code>gimmick_visual_prefab_data_list[N].x</code> through to the apply-time path-walker. The whitelist did suppress the \"nested writes not implemented\" rejection, but the validator then continued to a flat field_specs lookup that doesn't know about dotted paths and rejected with a misleading \"no field_schema entry, author needs to add one\" message instead. The validator now mirrors the existing buffinfo nested-path early-accept for iteminfo, so these intents reach the writer's path-walker the same way buff_data_list[N] paths already do. Bug reported on Nexus 2026-05-09 by helmysaini, niyaruza, and cajae against kliff_Wears_Damiane_Armor_Update_1.05.01.json on v3.2.13.",
+        ],
+    },
+    {
         "version": "3.2.13",
         "date": "2026-05-09",
         "notes": [

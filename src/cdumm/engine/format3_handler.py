@@ -637,6 +637,27 @@ def _classify_intent(
             "buff_data_list["):
         return None
 
+    # iteminfo nested-item paths (``prefab_data_list[N].xxx``,
+    # ``drop_default_data.xxx``, ``gimmick_visual_prefab_data_list
+    # [N].xxx``) are resolved by the iteminfo native writer's
+    # path-walker at apply time, not via field_schema or PABGB
+    # schema. The v3.2.11 fix added these to
+    # ``_diagnose_unsupported_intent``'s whitelist so they're not
+    # rejected as "nested writes not implemented", but the
+    # validator still continued to field_specs lookup which fails
+    # for nested paths and emitted a misleading "no field_schema
+    # entry, author needs to add one" message. Bug reported by
+    # helmysaini, niyaruza, cajae 2026-05-09 against
+    # kliff_Wears_Damiane_Armor_Update_1.05.01.json on v3.2.13.
+    # Mirror the buffinfo early-accept above so these intents reach
+    # the apply-time path-walker.
+    if tn_norm == "iteminfo" and (
+        intent.field.startswith("prefab_data_list[")
+        or intent.field.startswith("drop_default_data.")
+        or intent.field.startswith("gimmick_visual_prefab_data_list[")
+    ):
+        return None
+
     # List writer dispatch: this (table, field) pair has a registered
     # serializer (e.g. dropsetinfo.drops). The validator must accept
     # the intent so the apply-time expander can land the bytes.
