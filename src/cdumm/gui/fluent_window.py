@@ -5810,19 +5810,26 @@ class CdummWindow(FluentWindow):
                 title=tr("main.game_not_found"), content=tr("main.game_not_found_msg"),
                 duration=5000, position=InfoBarPosition.TOP, parent=self)
             return
+        # Detect install type up front so the except clause can
+        # branch on it. Steam / Xbox installs MUST go through their
+        # respective DRM bootstraps -- the bare-exe fallback that
+        # used to live in `except Exception` silently bypassed
+        # Themida + Denuvo on Steam installs and the game exited
+        # within a fraction of a second while CDUMM still showed
+        # a green "Game launched" toast. zvitko-hue GitHub #88.
+        from cdumm.storage.game_finder import is_steam_install, is_xbox_install
+        steam = is_steam_install(self._game_dir)
+        xbox = is_xbox_install(self._game_dir)
         try:
-            from cdumm.storage.game_finder import is_steam_install, is_xbox_install
-            if is_steam_install(self._game_dir):
+            if steam:
                 # Launch through Steam for proper overlay/DRM.
                 # get_steam_app_id reads steam_appid.txt / appmanifest_*.acf
                 # and falls back to the verified Crimson Desert AppID (3321460).
-                # Previously this hard-coded the wrong AppID which caused Steam
-                # to show "Game configuration unavailable".
                 from cdumm.engine.game_monitor import get_steam_app_id
                 app_id = get_steam_app_id(self._game_dir)
                 open_path(f"steam://rungameid/{app_id}")
-            elif is_xbox_install(self._game_dir):
-                # Xbox Game Pass — launch through the Xbox app
+            elif xbox:
+                # Xbox Game Pass -- launch through the Xbox app
                 open_path("shell:AppsFolder\\PearlAbyss.CrimsonDesert_8wekyb3d8bbwe!Game")
             else:
                 subprocess.Popen([str(exe)], cwd=str(self._game_dir / "bin64"))
@@ -5831,7 +5838,24 @@ class CdummWindow(FluentWindow):
                 duration=3000, position=InfoBarPosition.TOP, parent=self)
             self.showMinimized()
         except Exception as e:
-            # Fallback: try direct exe launch
+            if steam:
+                # Could not reach Steam. Spawning the bare exe here
+                # would silently fail under Themida + Denuvo and the
+                # user would see a fake "launched" toast. Surface a
+                # clear, actionable error instead.
+                InfoBar.error(
+                    title=tr("infobar.launch_failed"),
+                    content=tr("main.launch_failed_steam_not_running"),
+                    duration=6000, position=InfoBarPosition.TOP, parent=self)
+                return
+            if xbox:
+                InfoBar.error(
+                    title=tr("infobar.launch_failed"),
+                    content=tr("main.launch_failed_xbox_not_running"),
+                    duration=6000, position=InfoBarPosition.TOP, parent=self)
+                return
+            # Non-storefront install: bare-exe fallback is still
+            # the right call (no DRM bootstrap to bypass).
             try:
                 subprocess.Popen([str(exe)], cwd=str(self._game_dir / "bin64"))
                 InfoBar.success(
