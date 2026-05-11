@@ -121,11 +121,25 @@ def open_path(path: str | Path) -> bool:
             "(tried xdg-open, gio); install xdg-utils or gnome-vfs", target)
         return False
     except OSError as e:
-        logger.warning("open_path: failed to open %s: %s", target, e)
+        # Faisal 2026-05-12: split the failure message into two log
+        # lines so the exception type and message survive any
+        # email/text reflow on long URIs. Without this split the
+        # single line "open_path: failed to open <very long URL>:
+        # <ExceptionType>: <message>" gets wrapped at ~76 cols on
+        # reply-by-email and the exception detail drops off the end,
+        # which costs me the one diagnostic I actually need. zvitko-hue
+        # GitHub #88 reproduced this exact loss of detail.
+        logger.warning("open_path: failed to open %s", target)
+        logger.warning(
+            "open_path: OSError raised: %s: %s",
+            type(e).__name__, e)
         return False
     except Exception as e:
         logger.warning(
-            "open_path: unexpected error opening %s: %s", target, e)
+            "open_path: unexpected error opening %s", target)
+        logger.warning(
+            "open_path: exception raised: %s: %s",
+            type(e).__name__, e)
         return False
 
 
