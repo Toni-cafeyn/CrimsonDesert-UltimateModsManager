@@ -655,6 +655,21 @@ def _classify_intent(
         intent.field.startswith("prefab_data_list[")
         or intent.field.startswith("drop_default_data.")
         or intent.field.startswith("gimmick_visual_prefab_data_list[")
+        # Faisal 2026-05-12 GitHub #99 (paloroycevincent-sketch /
+        # Combat God's Plate Gloves): the iteminfo native writer has
+        # explicit byte-perfect round-trip support for these three
+        # primitive fields (iteminfo_writer.py:228 comment, verified
+        # against all 6235 vanilla records), but the validator's
+        # schema-walker reachability check rejected them because a
+        # preceding variable-length field has no walker descriptor.
+        # The writer handles them via _resolve_field_name into the
+        # parsed item dict, so early-accept here bypasses the walker
+        # check and lets the apply path do its job.
+        or intent.field in {
+            "cooltime",
+            "unk_post_cooltime_a",
+            "unk_post_cooltime_b",
+        }
     ):
         return None
 
