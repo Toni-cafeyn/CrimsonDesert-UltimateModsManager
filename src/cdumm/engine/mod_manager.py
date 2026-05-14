@@ -198,6 +198,58 @@ class ModManager:
 
         return mod
 
+    def list_mod_game_files(self, mod_id: int) -> list[str]:
+        """Return the distinct game-file paths this mod modifies, sorted.
+
+        Reads from three sources in order so the result covers every
+        mod type CDUMM supports today:
+
+          1. ``mod_deltas`` for byte-range / ENTR-style deltas (PAZ mods
+             imported as binary diffs against vanilla).
+          2. ``json_source`` parsed as a Format 1 / 2 patch-list mod —
+             each ``patches[i].game_file`` lands in the result.
+          3. ``json_source`` parsed as a Format 3 mod via
+             ``parse_format3_mod_targets`` — each ``target`` (single
+             or multi-target) lands in the result.
+
+        Empty result means the import produced nothing CDUMM tracks
+        (probably an ASI / loose-file mod handled outside this pipeline).
+        """
+        files: set[str] = set()
+        cur = self._db.connection.execute(
+            "SELECT DISTINCT file_path FROM mod_deltas WHERE mod_id = ? "
+            "ORDER BY file_path",
+            (mod_id,),
+        )
+        for (file_path,) in cur.fetchall():
+            if file_path:
+                files.add(file_path)
+        json_source = self.get_json_source(mod_id)
+        if json_source:
+            import json as _json
+            try:
+                jp = Path(json_source)
+                if jp.exists():
+                    data = _json.loads(jp.read_text(encoding="utf-8"))
+                    for patch in data.get("patches", []):
+                        gf = patch.get("game_file")
+                        if gf:
+                            files.add(gf)
+                    if data.get("format") == 3:
+                        from cdumm.engine.format3_handler import (
+                            parse_format3_mod_targets)
+                        try:
+                            for tgt, _ in parse_format3_mod_targets(jp):
+                                if tgt:
+                                    files.add(tgt)
+                        except (ValueError, OSError):
+                            pass
+            except (ValueError, OSError) as _e:
+                logger.debug(
+                    "list_mod_game_files: parsing json_source for mod "
+                    "%d failed (%s)", mod_id, _e)
+        return sorted(files)
+
     def clear_deltas(self, mod_id: int) -> None:
         """Remove all deltas for a mod (keeps the mod entry intact)."""
         delta_dir = self._deltas_dir / str(mod_id)
