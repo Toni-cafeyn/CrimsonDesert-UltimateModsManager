@@ -2882,10 +2882,20 @@ def import_from_zip(
         # stolen.
         import uuid as _uuid
         asi_staging = deltas_dir / "_asi_staging" / _uuid.uuid4().hex
-        # Pre-scan: collect basenames of all .asi files for the .ini filter.
+        # Pre-scan: collect basenames of all loose-loader files (.asi and
+        # .addon64) so the .ini filter can match companions of either.
+        # OneBluePumpkin GitHub #120: Crimson Weather 0.6.0 ships
+        # CrimsonWeather.addon64 + CrimsonWeather.ini + an unrelated
+        # second .ini. v3.3.5's commit 2a1fc37 extended _stage_asi_files
+        # (used by 7z / rar imports) to include .addon64, but missed
+        # this inline copy in import_from_zip, so .addon64 zips fell
+        # through unstaged and the bare-loader soft-success branch in
+        # _carryover_asi_staged never ran. Both extensions now stage
+        # the same way and the .ini companion check matches either.
         _all_files = [f for f in tmp_path.rglob("*") if f.is_file()]
-        _asi_stems = {
-            f.stem.lower() for f in _all_files if f.suffix.lower() == ".asi"
+        _loader_stems = {
+            f.stem.lower() for f in _all_files
+            if f.suffix.lower() in (".asi", ".addon64")
         }
         try:
             for f in _all_files:
@@ -2894,15 +2904,17 @@ def import_from_zip(
                 ext = f.suffix.lower()
                 if ext == ".asi":
                     pass  # always stage
-                elif ext == ".ini" and f.stem.lower() in _asi_stems:
-                    pass  # companion INI for an ASI we're staging
+                elif ext == ".addon64":
+                    pass  # ReShade addon, treat like .asi for staging
+                elif ext == ".ini" and f.stem.lower() in _loader_stems:
+                    pass  # companion INI for a loose loader we're staging
                 else:
                     continue
                 asi_staging.mkdir(parents=True, exist_ok=True)
                 import shutil
                 shutil.move(str(f), str(asi_staging / f.name))
                 result.asi_staged.append(str(asi_staging / f.name))
-                logger.info("Staged ASI file for GUI install: %s", f.name)
+                logger.info("Staged loose-loader file for GUI install: %s", f.name)
         except OSError as _stage_err:
             # Permission denied, file locked, cross-device — fail the
             # import gracefully instead of letting the exception bubble
