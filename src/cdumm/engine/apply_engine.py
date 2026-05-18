@@ -2257,6 +2257,22 @@ class ApplyWorker(QObject):
                 txn.stage_file(f"{overlay_dir}/0.paz", paz_bytes)
                 self.progress_updated.emit(88, "Staging overlay PAMT...")
                 txn.stage_file(f"{overlay_dir}/0.pamt", pamt_bytes)
+                # GitHub #141 mrkillerhomerxD: write an unambiguous
+                # marker file inside the overlay dir so the next apply
+                # can tell CDUMM-managed overlays apart from external-
+                # tool dirs (HAWT, etc.). Stale overlay dirs from prior
+                # applies carry .pamt/.paz files just like external
+                # dirs, so widened orphan protection (#83) was leaving
+                # them on disk and the user accumulated 004X..006X dirs
+                # over time. With this marker, the cleanup loop deletes
+                # the previous overlay dir while still protecting any
+                # 0036+ dir an external tool wrote.
+                marker_body = (
+                    "CDUMM overlay marker. Do not edit by hand.\n"
+                    f"overlay_dir={overlay_dir}\n"
+                ).encode("utf-8")
+                txn.stage_file(
+                    f"{overlay_dir}/_cdumm_overlay.marker", marker_body)
                 modified_pamts[overlay_dir] = pamt_bytes
                 logger.info("Overlay PAZ: %s (%d entries, PAZ=%d bytes, PAMT=%d bytes)",
                             overlay_dir, len(self._overlay_entries),
@@ -2537,6 +2553,25 @@ class ApplyWorker(QObject):
                     logger.info(
                         "Skipping orphan cleanup for user-protected dir: %s",
                         d.name)
+                    continue
+                # GitHub #141 mrkillerhomerxD: stale CDUMM-managed
+                # overlay dirs from prior applies carry .pamt/.paz
+                # files just like external-tool dirs, so the widened
+                # protection in #83 was leaving them on disk and the
+                # user accumulated dirs over time. Look for the
+                # marker file CDUMM writes inside every overlay dir
+                # it produces (apply_engine line ~2257). If the
+                # marker is present AND this dir is not the current
+                # overlay (already excluded via enabled_dirs above),
+                # it is a stale CDUMM overlay and is safe to delete.
+                marker_path = d / "_cdumm_overlay.marker"
+                if marker_path.exists():
+                    import shutil
+                    shutil.rmtree(d, ignore_errors=True)
+                    logger.info(
+                        "Cleaned up stale CDUMM overlay dir %s "
+                        "(carried _cdumm_overlay.marker, not current "
+                        "overlay)", d.name)
                     continue
                 # Externally-managed dirs carry a .pamt + .paz pair on
                 # disk. Originally the check was only ``0.pamt`` which
@@ -4846,6 +4881,17 @@ class RevertWorker(QObject):
                     logger.info(
                         "Fix Everything: keeping user-protected dir %s",
                         d.name)
+                    continue
+                # #141 marker check: stale CDUMM overlay dir (from a
+                # prior apply) should always be cleaned during Fix
+                # Everything since the user's intent is "revert to
+                # vanilla".
+                if (d / "_cdumm_overlay.marker").exists():
+                    import shutil
+                    shutil.rmtree(d, ignore_errors=True)
+                    logger.info(
+                        "Fix Everything: removed stale CDUMM overlay "
+                        "dir %s", d.name)
                     continue
                 # Same widened check as the apply path (#83): any
                 # .pamt or .paz artifact in the dir means an external

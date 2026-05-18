@@ -19,6 +19,13 @@ _UNRELEASED_NOTES: list[str] = [
 
 CHANGELOG = [
     {
+        "version": "3.3.8",
+        "date": "2026-05-19",
+        "notes": [
+            "<b>Stale CDUMM overlay dirs from prior applies are cleaned up again.</b> mrkillerhomerxD GitHub #141 reported that 004X and 005X dirs were not being deleted after each Apply, so the count of mod dirs grew on every run. Root cause: v3.3.6's external-tool protection (#83) and v3.3.7's widened version both keyed off 'any .pamt/.paz file in the dir', which meant the previous Apply's overlay dir (which always carries 0.paz + 0.pamt) was being protected as if it were a HAWT-style external tool. The fix is to write an unambiguous marker file (<code>_cdumm_overlay.marker</code>) inside every overlay dir CDUMM creates from v3.3.8 onward, and to let the orphan-cleanup loop delete dirs that carry this marker but are not the current Apply's overlay. External-tool dirs (HAWT, etc.) never carry the marker, so they continue to be protected as before. Same logic applied to the Fix Everything revert path. Pre-existing 004X/005X dirs from earlier builds do not carry the marker so this build will not delete them automatically; they need a one-time manual cleanup. After that, every new overlay dir CDUMM creates gets the marker and the next Apply tidies it up.",
+        ],
+    },
+    {
         "version": "3.3.7",
         "date": "2026-05-19",
         "notes": [
