@@ -188,7 +188,16 @@ def _parse_intents_block(
             )
         # The newer skill .field.json variant drops 'op' since 'set'
         # is implicit. We default to 'set' when absent. GitHub #66.
-        for required in ("entry", "key", "field"):
+        # GitHub #125 AgentRatchet: DMM v3.1 mods (e.g. Refinement Cost
+        # Reforged targeting multichangeinfo.pabgb) ship intents that
+        # only carry 'entry' and omit 'key'. The v3.1 spec lists key as
+        # required but also explicitly says "Try string_key (entry name)
+        # first, then numeric key", which means in practice the entry
+        # field is the primary record locator and key is a fallback the
+        # mod author may not have populated. Accept missing key when an
+        # entry name is present, default it to 0 (apply path looks up by
+        # entry name and only falls back to key if the name miss).
+        for required in ("entry", "field"):
             if required not in raw:
                 raise ValueError(
                     f"{label} intent #{i} is missing required key "
@@ -199,15 +208,21 @@ def _parse_intents_block(
                 f"{label} intent #{i} is missing 'new' "
                 f"(the value to set)"
             )
-        # ``key`` is the record id , silently coercing strings or
-        # truncating floats would silently target a wrong record.
-        # Booleans pass isinstance(int), so reject explicitly.
-        raw_key = raw["key"]
-        if isinstance(raw_key, bool) or not isinstance(raw_key, int):
-            raise ValueError(
-                f"{label} intent #{i} has non-integer key "
-                f"{raw_key!r}, key must be an integer record id"
-            )
+        # ``key`` is the numeric record id. Spec calls it required but
+        # in real-world v3.1 exports the entry name takes precedence
+        # so a missing key still lets the apply path resolve the
+        # record. Default to 0 (sentinel: "no numeric fallback").
+        # Booleans pass isinstance(int), so reject explicitly when
+        # the field IS present.
+        if "key" in raw:
+            raw_key = raw["key"]
+            if isinstance(raw_key, bool) or not isinstance(raw_key, int):
+                raise ValueError(
+                    f"{label} intent #{i} has non-integer key "
+                    f"{raw_key!r}, key must be an integer record id"
+                )
+        else:
+            raw_key = 0
         # ``old`` is optional and only present on raw-record
         # replacement intents (e.g. _buff_data_raw on skill.pabgb).
         # When present alongside ``new``, both must be hex strings

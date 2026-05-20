@@ -343,6 +343,42 @@ def expand_format3_into_aggregated(
                 participating_mod_ids.add(mid)
         for c in changes:
             n_bytes_changed += len(c.get("patched", "")) // 2
+        # #105 pitonpp macOS diagnostic: the writer reports applying
+        # N intents and produces a single byte-level change covering
+        # the whole table. If 'original' (vanilla bytes hex) and
+        # 'patched' (modified bytes hex) compare equal, the writer
+        # effectively produced vanilla, which mount-time will see as
+        # zero byte diff. On Windows this never happens for the same
+        # mods; on macOS pitonpp hits this every time. Comparing the
+        # two strings here surfaces the exact failure point.
+        for c in changes:
+            orig_hex = c.get("original", "")
+            patched_hex = c.get("patched", "")
+            if len(orig_hex) == len(patched_hex) and orig_hex == patched_hex:
+                logger.warning(
+                    "Format 3 whole-table writer for %s: produced a "
+                    "change at offset %d where original==patched "
+                    "(%d bytes). The writer effectively output vanilla "
+                    "bytes despite %d batched intent(s). This points to "
+                    "the writer failing to mutate the in-memory record "
+                    "list before serialise. macOS-specific symptom in "
+                    "GitHub #105 pitonpp.",
+                    target, c.get("offset", 0), len(orig_hex) // 2,
+                    len(batched))
+            else:
+                # Find the first byte position where original differs
+                # from patched, so the bundle shows the writer DID
+                # mutate something.
+                first_diff = -1
+                for i in range(min(len(orig_hex), len(patched_hex))):
+                    if orig_hex[i] != patched_hex[i]:
+                        first_diff = i // 2
+                        break
+                logger.info(
+                    "Format 3 whole-table writer for %s: first byte "
+                    "differs at offset %d, original len=%d patched len=%d",
+                    target, first_diff,
+                    len(orig_hex) // 2, len(patched_hex) // 2)
         logger.info(
             "Format 3 whole-table writer for %s: applied %d intents "
             "across %d mod(s) in one pass",

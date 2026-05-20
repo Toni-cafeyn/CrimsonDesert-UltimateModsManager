@@ -132,6 +132,66 @@ def test_v3_1_unsupported_op_skipped_at_validate_time(tmp_path):
     assert "v3.2" in reason
 
 
+def test_v3_1_intent_without_key_uses_entry_as_lookup(tmp_path):
+    """AgentRatchet GitHub #125 retested Refinement Cost Reforged on
+    v3.3.8 and the parser still rejected with 'targets[0]
+    (multichangeinfo.pabgb) intents intent #0 is missing required key
+    key'. v3.1 spec calls key required but in practice mod authors
+    drop it because the entry name is the primary record locator.
+
+    Accept missing key when entry is present, default to 0.
+    """
+    doc = {
+        "format": 3,
+        "format_minor": 1,
+        "modinfo": {"title": "no-key probe", "version": "1.0"},
+        "targets": [{
+            "file": "multichangeinfo.pabgb",
+            "intents": [{
+                "entry": "Refinement_Lvl_50",
+                "field": "cost",
+                "op": "set",
+                "new": 1000,
+            }],
+        }],
+    }
+    p = tmp_path / "no_key.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    pairs = parse_format3_mod_targets(p)
+    assert len(pairs) == 1
+    target, intents = pairs[0]
+    assert target == "multichangeinfo.pabgb"
+    assert len(intents) == 1
+    assert intents[0].entry == "Refinement_Lvl_50"
+    assert intents[0].key == 0
+    assert intents[0].field == "cost"
+
+
+def test_v3_1_intent_with_explicit_key_still_validates(tmp_path):
+    """Old behavior preserved: when key IS present, it must be an
+    integer (no bools, no strings). Backwards-compat guard for the
+    existing #66 DropSets variant."""
+    doc = {
+        "format": 3,
+        "format_minor": 1,
+        "modinfo": {"title": "bool-key probe", "version": "1.0"},
+        "targets": [{
+            "file": "iteminfo.pabgb",
+            "intents": [{
+                "entry": "Test_Item",
+                "key": True,  # bool not allowed even though isinstance(int)
+                "field": "cooltime",
+                "op": "set",
+                "new": 0,
+            }],
+        }],
+    }
+    p = tmp_path / "bool_key.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(ValueError, match="non-integer key"):
+        parse_format3_mod_targets(p)
+
+
 def test_v3_0_singular_shape_still_accepted(tmp_path):
     """v3.0 documents (singular target + intents, no format_minor) still
     parse without the log line firing. v3.1 acceptance must not regress
