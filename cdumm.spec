@@ -3,6 +3,7 @@
 
 import importlib.util
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_data_files, collect_all
 
@@ -54,7 +55,7 @@ if os.path.isfile(_skill_parser_lic):
 # qfluentwidgets resources (icons, stylesheets, compiled Qt resources)
 _qfw_datas = collect_data_files('qfluentwidgets')
 
-# qframelesswindow — collect everything (binaries, datas, hidden imports)
+# qframelesswindow, collect everything (binaries, datas, hidden imports)
 _qflw_datas, _qflw_binaries, _qflw_hiddenimports = collect_all('qframelesswindow')
 
 
@@ -244,12 +245,12 @@ a = Analysis(
         'PySide6.QtQuick3D', 'PySide6.QtShaderTools',
         'PySide6.QtSpatialAudio', 'PySide6.QtHttpServer',
         'PySide6.QtTest', 'PySide6.QtDBus', 'PySide6.QtConcurrent',
-        # scipy/numpy — only needed for acrylic blur (disabled)
+        # scipy/numpy, only needed for acrylic blur (disabled)
         'scipy', 'numpy', 'numpy.core', 'numpy.linalg',
-        # PIL/Pillow — not imported by CDUMM (colorthief dep, unused)
+        # PIL/Pillow, not imported by CDUMM (colorthief dep, unused)
         'PIL', 'PIL._imaging', 'PIL._avif', 'PIL._webp', 'PIL.Image',
         'Pillow', 'colorthief',
-        # brotli — not used by CDUMM (transitive dep from py7zr)
+        # brotli, not used by CDUMM (transitive dep from py7zr)
         'brotli', '_brotli', 'brotlicffi',
         # cryptography used by privatebin for AES-GCM + PBKDF2. Keep minimal subset.
         'cryptography.x509', 'cryptography.fernet',
@@ -269,7 +270,7 @@ _dll_excludes = {
     'Qt6Qml.dll',            # ~5 MB
     'Qt6ShaderTools.dll',    # ~4 MB
     'Qt6Quick3DRuntimeRender.dll',
-    'Qt6OpenGL.dll',         # ~1.9 MB (not used — no OpenGL rendering)
+    'Qt6OpenGL.dll',         # ~1.9 MB (not used, no OpenGL rendering)
     'Qt6QmlModels.dll',      # ~0.95 MB
     'Qt6QmlMeta.dll',        # ~0.15 MB
     'Qt6QmlWorkerScript.dll',  # ~0.08 MB
@@ -293,7 +294,7 @@ _dll_excludes = {
 # Also filter out PIL/brotli/cryptography binary extensions
 _binary_name_excludes = {
     '_avif', '_imaging', '_webp', '_imagingcms', '_brotli',
-    # '_rust' kept — cryptography uses it for AES-GCM in privatebin uploads
+    # '_rust' kept, cryptography uses it for AES-GCM in privatebin uploads
     '_ec_ws',      # Cryptodome elliptic curve (not used by CDUMM)
     '_ed448',      # Cryptodome Ed448
     '_curve448',   # Cryptodome Curve448
@@ -335,8 +336,13 @@ exe = EXE(
     name='CDUMM',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
-    # UPX disabled — heuristic AV engines (Bkav, CrowdStrike Falcon,
+    # strip corrupts python3xx.dll on Windows (Git for Windows
+    # ships a strip.exe that PyInstaller picks up, but the result
+    # fails to LoadLibrary at runtime with "Invalid access to
+    # memory location"). Disable on win32 only; macOS keeps it on
+    # to save ~few MB.
+    strip=sys.platform != 'win32',
+    # UPX disabled, heuristic AV engines (Bkav, CrowdStrike Falcon,
     # DeepInstinct, Fortinet) flag UPX-packed PyInstaller binaries
     # because real malware uses UPX too. Defender is fine either way,
     # but enterprise scanners aren't. Trade-off: exe grows ~50% (48 MB
