@@ -5,11 +5,6 @@ See docs/superpowers/specs/2026-05-22-material-encryption-fix-design.md
 for full context.
 """
 
-import os
-import struct
-
-import pytest
-
 from cdumm.archive.paz_crypto import (
     looks_like_plaintext_head,
 )

@@ -9,7 +9,7 @@ Uses Rust cdumm_native for performance-critical operations when available,
 with Python fallback for development/testing.
 
 Usage:
-    from cdumm.archive.paz_crypto import derive_key_iv, encrypt, decrypt, lz4_compress
+    from cdumm.archive.paz_crypto import derive_key_iv, encrypt, decrypt, lz4_compress, looks_like_plaintext_head
 """
 
 import os
@@ -98,7 +98,7 @@ def lz4_compress(data: bytes) -> bytes:
     return lz4.block.compress(data, store_size=False)
 
 
-# Encryption detection helpers
+# ── Encryption detection helpers ────────────────────────────────────
 
 
 def looks_like_plaintext_head(data: bytes) -> bool:
