@@ -11,7 +11,10 @@ from cdumm.archive.paz_crypto import (
     looks_like_plaintext_head,
     lz4_compress,
 )
-from cdumm.archive.paz_parse import PazEntry
+from cdumm.archive.paz_parse import (
+    PazEntry,
+    _populate_encryption_overrides,
+)
 
 
 # Sample 16 bytes of ChaCha20 ciphertext-looking content (high entropy)
@@ -162,3 +165,107 @@ class TestPazEntryEncryptedWhitelist:
         e = self._make_entry('ui/page.html')
         e._encrypted_override = False
         assert e.encrypted is False
+
+
+class TestPopulateEncryptionOverrides:
+    """Unit tests for the parse-time sniff helper."""
+
+    def _make_entry(self, path: str, paz_file: str, offset: int,
+                     comp_size: int, orig_size: int,
+                     compression_type: int = 0) -> PazEntry:
+        # PAMT flags pack compression_type at bits 16..19.
+        flags = (compression_type & 0xF) << 16
+        return PazEntry(
+            path=path,
+            paz_file=paz_file,
+            offset=offset,
+            comp_size=comp_size,
+            orig_size=orig_size,
+            flags=flags,
+            paz_index=0,
+        )
+
+    def test_uncompressed_plaintext_slot_sets_override_false(self, tmp_path):
+        paz = tmp_path / "0.paz"
+        plaintext = b'\xef\xbb\xbf<Technique Name="Water"/>\r\n'
+        paz.write_bytes(plaintext)
+        entry = self._make_entry(
+            'technique/water.material', str(paz), 0,
+            comp_size=len(plaintext), orig_size=len(plaintext)
+        )
+
+        _populate_encryption_overrides([entry])
+
+        assert entry._encrypted_override is False
+
+    def test_uncompressed_encrypted_slot_sets_override_true(self, tmp_path):
+        paz = tmp_path / "0.paz"
+        plaintext = b'\xef\xbb\xbf<Technique Name="Water"/>\r\n'
+        ciphertext = encrypt(plaintext, 'water.material')
+        paz.write_bytes(ciphertext)
+        entry = self._make_entry(
+            'technique/water.material', str(paz), 0,
+            comp_size=len(ciphertext), orig_size=len(plaintext)
+        )
+
+        _populate_encryption_overrides([entry])
+
+        assert entry._encrypted_override is True
+
+    def test_multiple_entries_in_same_paz_share_one_open(self, tmp_path):
+        """Sanity check that grouping doesn't break correctness for
+        multiple entries in the same PAZ at different offsets."""
+        paz = tmp_path / "0.paz"
+        # Both blocks must be exactly 32 bytes so the second entry's
+        # offset aligns cleanly and detect_encryption_from_head gets a
+        # full 32-byte read. Null padding makes looks_like_plaintext_head
+        # return False (< 90% printable), so use real XML padding instead.
+        plaintext = b'\xef\xbb\xbf<root><element/></root>\r\n\r\n'
+        ciphertext = encrypt(b'\xef\xbb\xbf<root><element/></root>\r\n\r\n',
+                             'foo.material')
+        paz.write_bytes(plaintext + ciphertext)
+
+        plain_entry = self._make_entry(
+            'ui/a.xml', str(paz), 0,
+            comp_size=len(plaintext), orig_size=len(plaintext)
+        )
+        crypt_entry = self._make_entry(
+            'technique/foo.material', str(paz), len(plaintext),
+            comp_size=len(ciphertext), orig_size=len(ciphertext)
+        )
+
+        _populate_encryption_overrides([plain_entry, crypt_entry])
+
+        assert plain_entry._encrypted_override is False
+        assert crypt_entry._encrypted_override is True
+
+    def test_missing_paz_leaves_override_none(self, tmp_path):
+        """IOError fallback: when the PAZ can't be opened, the
+        override stays None so PazEntry.encrypted falls through to
+        the widened extension whitelist."""
+        entry = self._make_entry(
+            'technique/water.material',
+            str(tmp_path / "does_not_exist.paz"), 0,
+            comp_size=100, orig_size=100
+        )
+
+        _populate_encryption_overrides([entry])
+
+        assert entry._encrypted_override is None
+        # Whitelist still classifies .material as encrypted.
+        assert entry.encrypted is True
+
+    def test_truncated_slot_classified_as_encrypted(self, tmp_path):
+        """A PAZ shorter than the declared offset returns 0 bytes;
+        detect_encryption_from_head treats empty head as encrypted
+        (fail-safe)."""
+        paz = tmp_path / "0.paz"
+        paz.write_bytes(b'\x00' * 10)
+        entry = self._make_entry(
+            'technique/foo.material', str(paz), 1000,
+            comp_size=2315, orig_size=2315
+        )
+
+        _populate_encryption_overrides([entry])
+
+        assert entry._encrypted_override is True

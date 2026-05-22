@@ -13,6 +13,7 @@ Library usage:
         print(e.path, e.comp_size, e.orig_size)
 """
 
+import collections
 import logging
 import os
 import struct
@@ -228,6 +229,48 @@ def _parse_pamt_impl(pamt_path: str, paz_dir: str = None) -> list[PazEntry]:
             _time.sleep(0)
 
     return entries
+
+
+def _populate_encryption_overrides(entries: list[PazEntry]) -> None:
+    """Sniff the first 32 bytes of every entry's PAZ slot and set
+    `_encrypted_override` accordingly. Mutates entries in place.
+
+    Entries are grouped by `paz_file` so each PAZ is opened once
+    regardless of how many entries point into it. PAZ files that
+    cannot be opened (missing, permission denied, etc.) leave their
+    entries' overrides at `None`, so `PazEntry.encrypted` falls back
+    to the widened extension whitelist.
+
+    Truncated slots (offset past end of file, read returns < 32
+    bytes) are classified as encrypted by detect_encryption_from_head
+    (fail-safe).
+
+    Performance: approximately one seek + read(32) per entry plus one
+    open per PAZ file. On a typical CD PAMT (tens of thousands of
+    entries, approximately 10 PAZ files on SSD) this completes well
+    under one second.
+    """
+    from cdumm.archive.paz_crypto import detect_encryption_from_head
+
+    by_paz: dict[str, list[PazEntry]] = collections.defaultdict(list)
+    for entry in entries:
+        by_paz[entry.paz_file].append(entry)
+
+    for paz_file, group in by_paz.items():
+        try:
+            with open(paz_file, 'rb') as f:
+                for entry in group:
+                    f.seek(entry.offset)
+                    head = f.read(32)
+                    entry._encrypted_override = detect_encryption_from_head(
+                        head, entry.compression_type, entry.orig_size
+                    )
+        except (IOError, OSError) as e:
+            logger.warning(
+                "Could not sniff %s for encryption detection (%s); "
+                "%d entries will fall back to the extension whitelist",
+                paz_file, e, len(group)
+            )
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
