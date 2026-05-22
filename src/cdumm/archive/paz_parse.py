@@ -261,6 +261,9 @@ def _populate_encryption_overrides(entries: list[PazEntry]) -> None:
             with open(paz_file, 'rb') as f:
                 for entry in group:
                     f.seek(entry.offset)
+                    # 32 bytes is enough for a BOM (3) + leading
+                    # whitespace + the 16-useful-byte window that
+                    # looks_like_plaintext_head inspects.
                     head = f.read(32)
                     entry._encrypted_override = detect_encryption_from_head(
                         head, entry.compression_type, entry.orig_size
