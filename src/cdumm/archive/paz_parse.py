@@ -249,9 +249,9 @@ def _populate_encryption_overrides(entries: list[PazEntry]) -> None:
     entries' overrides at `None`, so `PazEntry.encrypted` falls back
     to the widened extension whitelist.
 
-    Truncated slots (offset past end of file, read returns < 32
-    bytes) are classified as encrypted by detect_encryption_from_head
-    (fail-safe).
+    Truncated slots (offset past end of file, read returns 0 bytes)
+    yield None from detect_encryption_from_head (ambiguous); those
+    entries fall back to the extension whitelist via PazEntry.encrypted.
 
     Performance: approximately one seek + read(32) per entry plus one
     open per PAZ file. On a typical CD PAMT (tens of thousands of
@@ -273,9 +273,14 @@ def _populate_encryption_overrides(entries: list[PazEntry]) -> None:
                     # whitespace + the 16-useful-byte window that
                     # looks_like_plaintext_head inspects.
                     head = f.read(32)
-                    entry._encrypted_override = detect_encryption_from_head(
-                        head, entry.compression_type, entry.orig_size
+                    verdict = detect_encryption_from_head(
+                        head,
+                        entry.compression_type,
+                        entry.orig_size,
+                        filename=os.path.basename(entry.path),
                     )
+                    if verdict is not None:
+                        entry._encrypted_override = verdict
         except (IOError, OSError) as e:
             logger.warning(
                 "Could not sniff %s for encryption detection (%s); "

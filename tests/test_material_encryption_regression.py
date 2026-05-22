@@ -6,6 +6,7 @@ for full context.
 """
 
 from cdumm.archive.paz_crypto import (
+    decrypt,
     detect_encryption_from_head,
     encrypt,
     looks_like_plaintext_head,
@@ -67,7 +68,8 @@ class TestDetectEncryptionFromHead:
         ciphertext = encrypt(PLAINTEXT_XML, 'water.material')
         head = ciphertext[:32]
         assert detect_encryption_from_head(
-            head, compression_type=0, orig_size=len(PLAINTEXT_XML)
+            head, compression_type=0, orig_size=len(PLAINTEXT_XML),
+            filename='water.material'
         ) is True
 
     def test_lz4_compressed_plaintext(self):
@@ -93,18 +95,46 @@ class TestDetectEncryptionFromHead:
         ) is True
 
     def test_empty_head_uncompressed(self):
-        # Truncated read: empty head, no compression. Fail-safe to
-        # "encrypted" so we never mistakenly write plaintext into a
-        # slot we don't understand.
+        # Truncated read: empty head, no compression. Ambiguous now
+        # (was previously fail-safe-to-encrypted). The widened
+        # whitelist on PazEntry handles known encrypted extensions
+        # without needing a sniff verdict here.
         assert detect_encryption_from_head(
             b'', compression_type=0, orig_size=0
-        ) is True
+        ) is None
 
     def test_empty_head_compressed(self):
         # Empty head on a compressed slot. lz4_decompress raises, so
         # classification is "encrypted" (fail-safe).
         assert detect_encryption_from_head(
             b'', compression_type=2, orig_size=10
+        ) is True
+
+    def test_uncompressed_nonprintable_no_filename_is_ambiguous(self):
+        # Random binary, no filename to try decrypt with: ambiguous.
+        assert detect_encryption_from_head(
+            b'\x00\x01\x02\x03' * 8, compression_type=0, orig_size=32
+        ) is None
+
+    def test_uncompressed_nonprintable_with_wrong_key_stays_ambiguous(self):
+        # Random binary with a filename whose decryption does NOT
+        # yield printable text. Result: still ambiguous.
+        assert detect_encryption_from_head(
+            b'\x00\x01\x02\x03' * 8,
+            compression_type=0,
+            orig_size=32,
+            filename='models/character.bin',
+        ) is None
+
+    def test_uncompressed_encrypted_text_detected_via_decrypt(self):
+        # Encrypted text with a non-whitelisted extension (hypothetical
+        # future format). Without decrypt-validate we'd return None; with
+        # it we correctly classify as encrypted.
+        plaintext = b'\xef\xbb\xbf<Future Name="x"/>\r\n'
+        ciphertext = encrypt(plaintext, 'thing.unknown')
+        assert detect_encryption_from_head(
+            ciphertext[:32], compression_type=0,
+            orig_size=len(plaintext), filename='thing.unknown'
         ) is True
 
 
@@ -255,10 +285,11 @@ class TestPopulateEncryptionOverrides:
         # Whitelist still classifies .material as encrypted.
         assert entry.encrypted is True
 
-    def test_truncated_slot_classified_as_encrypted(self, tmp_path):
+    def test_truncated_slot_leaves_override_none(self, tmp_path):
         """A PAZ shorter than the declared offset returns 0 bytes;
-        detect_encryption_from_head treats empty head as encrypted
-        (fail-safe)."""
+        detect_encryption_from_head returns None for empty head
+        (ambiguous), so the override stays None and PazEntry.encrypted
+        falls back to the widened whitelist."""
         paz = tmp_path / "0.paz"
         paz.write_bytes(b'\x00' * 10)
         entry = self._make_entry(
@@ -268,7 +299,30 @@ class TestPopulateEncryptionOverrides:
 
         _populate_encryption_overrides([entry])
 
-        assert entry._encrypted_override is True
+        assert entry._encrypted_override is None
+        # Whitelist still classifies .material as encrypted.
+        assert entry.encrypted is True
+
+    def test_uncompressed_binary_leaves_override_none(self, tmp_path):
+        """A truly binary plaintext slot (no text, no compression)
+        is ambiguous to the sniff. Override stays None. PazEntry.
+        encrypted falls back to whitelist: .bin extension is NOT in
+        the whitelist, so the entry is classified as not encrypted
+        (correct behavior: the game runtime doesn't decrypt .bin
+        files)."""
+        paz = tmp_path / "0.paz"
+        # 64 bytes of non-text, non-decryptable-to-text binary.
+        binary = bytes(range(64))
+        paz.write_bytes(binary)
+        entry = self._make_entry(
+            'models/data.bin', str(paz), 0,
+            comp_size=64, orig_size=64
+        )
+
+        _populate_encryption_overrides([entry])
+
+        assert entry._encrypted_override is None
+        assert entry.encrypted is False
 
 
 class TestParsePamtPopulatesOverrides:
@@ -301,7 +355,10 @@ class TestParsePamtPopulatesOverrides:
         # .xml was encrypted: override True.
         assert xml._encrypted_override is True
 
-        # Plaintext .bin: override False (sniff wins over the
-        # whitelist, which would have said False anyway).
-        assert binary._encrypted_override is False
+        # Plaintext .bin: sniff is ambiguous on uncompressed binary
+        # (no way to tell from bytes alone), so it leaves the
+        # override at None. PazEntry.encrypted then falls back to the
+        # whitelist, which correctly says False (.bin is not in the
+        # known encrypted extensions list).
+        assert binary._encrypted_override is None
         assert binary.encrypted is False

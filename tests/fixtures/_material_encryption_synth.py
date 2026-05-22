@@ -35,10 +35,7 @@ def build_synthetic_pamt_paz(tmp_path: Path):
     mat_plain = b'\xef\xbb\xbf<Technique Name="Water"/>\r\n'
     mat_crypt = encrypt(mat_plain, 'water.material')
 
-    # All-printable ASCII so the sniff classifies this slot as NOT
-    # encrypted (looks_like_plaintext_head returns True). The test
-    # asserts _encrypted_override is False for this entry.
-    bin_plain = b'PLAINBINARYRECORDPADDING01234567'  # 32 printable bytes
+    bin_plain = b'\x00\x01\x02\x03' * 16  # 64 bytes, uncompressible binary
 
     # Pad each slot to keep offsets aligned and >= 32 bytes so the
     # sniff has a full head to read.

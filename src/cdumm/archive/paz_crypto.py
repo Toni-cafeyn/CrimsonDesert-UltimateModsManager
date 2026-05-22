@@ -131,33 +131,36 @@ def looks_like_plaintext_head(data: bytes) -> bool:
 
 
 def detect_encryption_from_head(head: bytes, compression_type: int,
-                                orig_size: int) -> bool:
-    """Classify a PAZ slot's first ~32 bytes as encrypted (True) or
-    plaintext (False).
+                                orig_size: int,
+                                filename: str | None = None) -> bool | None:
+    """Classify a PAZ slot's first ~32 bytes as encrypted (True),
+    plaintext (False), or ambiguous (None).
 
     The PAMT has no reliable encrypted flag, but the slot's leading
-    bytes are diagnostic:
+    bytes are diagnostic in most cases:
 
-    * If compression_type == 2 (LZ4 block), the engine compresses
-      then encrypts. A valid LZ4 decompression of the raw head means
+    * compression_type == 2 (LZ4 block): the engine compresses then
+      encrypts. A successful LZ4 decompress on the raw head means
       the slot was stored as plaintext-compressed; a failed
-      decompression means the LZ4 bytes were further encrypted.
-    * If compression_type != 2 (no compression, or a future codec we
-      don't model), fall back to a printable-text heuristic.
-
-    The ChaCha20 collision risk (random ciphertext that happens to
-    form a valid LZ4 block prefix) is bounded by the LZ4 block
-    format's structural constraints to well below 2^-64 on 32 bytes
-    and accepted as negligible.
-
-    Args:
-        head: first ~32 bytes read at the slot offset
-        compression_type: PAMT compression_type field (0=none, 2=lz4)
-        orig_size: PAMT orig_size, needed for lz4 decompression
+      decompress means the LZ4 bytes were further encrypted.
+    * compression_type != 2, head looks like printable text:
+      definitively plaintext.
+    * compression_type != 2, head looks non-printable: ambiguous.
+      Could be encrypted text, could be plain binary (e.g. texture).
+      If `filename` is provided, try a ChaCha20 decryption with the
+      basename-derived key and check whether the result is printable
+      text. If yes, the slot was encrypted text (catches new
+      encrypted extensions automatically). If no, return None and
+      let the caller fall back to the extension whitelist.
 
     Returns:
-        True if the slot looks encrypted (caller must re-encrypt on
-        repack), False if plaintext.
+        True: confident the slot is encrypted (caller must
+            re-encrypt on repack).
+        False: confident the slot is plaintext.
+        None: ambiguous (binary-looking uncompressed bytes that did
+            not decrypt to printable text). Caller should leave the
+            entry's _encrypted_override at None so PazEntry.encrypted
+            falls through to the extension whitelist.
     """
     if compression_type == 2:
         try:
@@ -168,4 +171,15 @@ def detect_encryption_from_head(head: bytes, compression_type: int,
             # means the bytes aren't a valid LZ4 block, so they were
             # encrypted after compression.
             return True
-    return not looks_like_plaintext_head(head)
+    if looks_like_plaintext_head(head):
+        return False
+    # Uncompressed non-printable: ambiguous. Try decrypt-and-validate
+    # if we have a filename to derive the key from.
+    if filename is not None and head:
+        try:
+            decrypted = decrypt(head, filename)
+        except Exception:
+            return None
+        if looks_like_plaintext_head(decrypted):
+            return True
+    return None
