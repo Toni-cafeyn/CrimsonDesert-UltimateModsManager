@@ -1,0 +1,101 @@
+name: Build Windows release
+
+# Triggers:
+#   * push of a tag matching v* -- attaches the .exe to the GitHub
+#     Release for that tag automatically, mirroring release-macos.yml.
+#   * workflow_dispatch -- manual run from the Actions tab. Produces
+#     the .exe as a workflow artifact (30-day retention) but does NOT
+#     touch GitHub Releases.
+#
+# Runner: windows-latest. Pinning to a specific image (e.g.
+# windows-2022) would make CI more deterministic across GitHub's
+# image bumps; left at windows-latest here so the build rides along
+# with whatever GitHub considers current.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to create / update GitHub Releases
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          # cdumm_native uses pyo3's abi3-py39 stable ABI so any
+          # Python 3.9+ works; 3.13 matches the local Windows dev
+          # environment for reproducibility.
+          python-version: "3.13"
+
+      - name: Set up Rust toolchain (x86_64-pc-windows-msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Cache Cargo's registry + git index + the native/ build dir.
+      # Mirrors release-macos.yml. Cache key pinned to the runner so a
+      # runner-image bump invalidates the cache automatically.
+      - name: Cache cargo + native target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: cargo-windows-${{ hashFiles('native/Cargo.lock') }}
+          restore-keys: cargo-windows-
+
+      - name: Cache pip wheel cache
+        uses: actions/cache@v5
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-windows-py313-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-windows-py313-
+
+      - name: Install Python build tooling
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install maturin pyinstaller
+          python -m pip install -e .
+
+      - name: Build native extension
+        shell: pwsh
+        working-directory: native
+        run: maturin develop --release
+
+      - name: Build .exe
+        shell: pwsh
+        run: python -m PyInstaller cdumm.spec --clean --noconfirm
+
+      # ----- Artifact upload ----------------------------------------
+      # Always uploaded so workflow_dispatch runs (no tag) still
+      # produce a downloadable .exe from the Actions UI.
+      - name: Upload .exe as workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: CDUMM-windows
+          path: dist/CDUMM.exe
+          retention-days: 30
+          if-no-files-found: error
+
+      # ----- Release attachment (tag-triggered runs only) ----------
+      - name: Attach .exe to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/CDUMM.exe
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
