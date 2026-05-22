@@ -48,12 +48,19 @@ class PazEntry:
         """Whether this entry is ChaCha20-encrypted.
 
         The PAMT has no reliable encrypted flag. The engine encrypts
-        text formats inside ui/xml/ — XML, CSS, HTML, JS — and the
+        text formats inside ui/xml/ (XML, CSS, HTML, JS) and the
         heuristic must catch all of them. v2.1.2 originally fixed
         Dark Mode Map (CSS crash on map open) by widening this past
         XML-only; the v3.0 rewrite silently narrowed it back to
         '.xml' alone, regressing the fix. Bug report from
         TheUnLuckyOnes 2026-04-26 caught it.
+
+        2026-05-22: widened again to include .material, .technique,
+        and .thtml after a separate silent-corruption bug in
+        InternalGraphicsMod. The structural fix is the parse-time
+        sniff in _populate_encryption_overrides; this whitelist is
+        now only a fallback for entries built by hand or for the
+        IOError-during-sniff path.
 
         When extraction detects actual encryption, set
         _encrypted_override = True so repack re-encrypts correctly.
@@ -61,7 +68,8 @@ class PazEntry:
         if self._encrypted_override is not None:
             return self._encrypted_override
         return self.path.lower().endswith(
-            ('.xml', '.css', '.html', '.js'))
+            ('.xml', '.css', '.html', '.js',
+             '.material', '.technique', '.thtml'))
 
 
 _MAX_SANE_PAZ_COUNT = 4096
@@ -270,7 +278,7 @@ def rewrite_pamt_localization_filename(
     Swaps the filename ``localizationstring_<from_suffix>.paloc`` for
     ``localizationstring_<to_suffix>.paloc`` inside a PAMT's node (filename)
     section. Used when a localisation PAZ mod targets language X but the
-    user's Steam language is Y — rewriting the filename inside the PAMT
+    user's Steam language is Y, rewriting the filename inside the PAMT
     makes the game resolve the mod's `.paloc` payload under the correct
     per-language VFS key.
 
@@ -299,14 +307,14 @@ def rewrite_pamt_localization_filename(
         folder_size = struct.unpack_from("<I", pamt_data, off)[0]
         off += 4
         off += folder_size
-        # Node section — this is the fn_block. off currently points at the
+        # Node section, this is the fn_block. off currently points at the
         # uint32 size prefix.
         fn_block_offset = off
         fn_block_size = struct.unpack_from("<I", pamt_data, off)[0]
         off += 4
         names_start = off
         names_end = off + fn_block_size
-        # Folder record count comes after the node bytes — walk further only
+        # Folder record count comes after the node bytes, walk further only
         # if we need file_count, but here we use JMM's convention of treating
         # a single-file PAMT as the only valid input.
         off = names_end

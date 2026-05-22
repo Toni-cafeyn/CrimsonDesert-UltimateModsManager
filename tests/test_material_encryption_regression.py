@@ -11,6 +11,7 @@ from cdumm.archive.paz_crypto import (
     looks_like_plaintext_head,
     lz4_compress,
 )
+from cdumm.archive.paz_parse import PazEntry
 
 
 # Sample 16 bytes of ChaCha20 ciphertext-looking content (high entropy)
@@ -102,3 +103,62 @@ class TestDetectEncryptionFromHead:
         assert detect_encryption_from_head(
             b'', compression_type=2, orig_size=10
         ) is True
+
+
+class TestPazEntryEncryptedWhitelist:
+    """Whitelist regression: when _encrypted_override is None (entries
+    built by hand or via the IOError fallback), the property falls
+    back to a hard-coded extension whitelist. v3.0 narrowed it to
+    .xml only and re-introduced the v2.1.2 regression; v3.x+ keeps
+    .xml/.css/.html/.js; this fix adds the three extensions known to
+    cause silent corruption in-game when missed: .material,
+    .technique, .thtml.
+    """
+
+    def _make_entry(self, path: str) -> PazEntry:
+        return PazEntry(
+            path=path,
+            paz_file='dummy.paz',
+            offset=0,
+            comp_size=0,
+            orig_size=0,
+            flags=0,
+            paz_index=0,
+        )
+
+    def test_xml_is_encrypted(self):
+        assert self._make_entry('ui/xml/foo.xml').encrypted is True
+
+    def test_css_is_encrypted(self):
+        assert self._make_entry('ui/xml/theme.css').encrypted is True
+
+    def test_html_is_encrypted(self):
+        assert self._make_entry('ui/page.html').encrypted is True
+
+    def test_js_is_encrypted(self):
+        assert self._make_entry('ui/script.js').encrypted is True
+
+    def test_material_is_encrypted(self):
+        # Regression: this returned False before the fix and caused
+        # silent water/dissolve material corruption in
+        # InternalGraphicsMod v3.1.2.
+        assert self._make_entry('technique/water.material').encrypted is True
+
+    def test_technique_is_encrypted(self):
+        assert self._make_entry('technique/foo.technique').encrypted is True
+
+    def test_thtml_is_encrypted(self):
+        assert self._make_entry('ui/template.thtml').encrypted is True
+
+    def test_unknown_extension_is_not_encrypted(self):
+        assert self._make_entry('models/character.bin').encrypted is False
+
+    def test_override_true_wins_over_whitelist_miss(self):
+        e = self._make_entry('models/foo.bin')
+        e._encrypted_override = True
+        assert e.encrypted is True
+
+    def test_override_false_wins_over_whitelist_hit(self):
+        e = self._make_entry('ui/page.html')
+        e._encrypted_override = False
+        assert e.encrypted is False
