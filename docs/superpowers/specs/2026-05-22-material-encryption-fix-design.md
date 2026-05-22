@@ -7,9 +7,7 @@ Related bug report: `~/crimson-desert/CDUMM_MATERIAL_ENCRYPTION_BUG.md`
 
 Make CDUMM detect encryption state from the actual PAZ slot bytes at parse time, so that any file the game runtime encrypts (regardless of extension) is correctly re-encrypted on repack. Eliminate the silent corruption of `.material`, `.technique`, `.thtml` (and unknown future extensions).
 
-Priority order:
-1. Ship a usable fix on the fork (`Toni-cafeyn/CrimsonDesert-UltimateModsManager`) as a Windows `.exe` artifact.
-2. Best-effort upstream PRs to `faisalkindi/CrimsonDesert-UltimateModsManager`, split by logical change.
+Scope: fork-only (`Toni-cafeyn/CrimsonDesert-UltimateModsManager`). No PRs to `faisalkindi/CrimsonDesert-UltimateModsManager` upstream. Deliverable is a Windows `.exe` produced by the fork's CI and consumed by the modding community.
 
 ## Non-goals
 
@@ -177,36 +175,33 @@ Fixture generation lives in `tests/conftest.py`, uses only public helpers from `
 
 ## Delivery plan
 
-**Branch 1, `fix/material-encryption-whitelist`** (upstream PR #1, autonomous, minimal patch)
-- `paz_parse.py`: widen the whitelist in `PazEntry.encrypted` to include `.material`, `.technique`, `.thtml`
-- `tests/test_material_encryption_regression.py`: whitelist regression test (`PazEntry(...).encrypted` cases)
-- Rationale: smallest possible patch, mergeable on its own. Resolves the bug for the three currently-known extensions without touching any other code. Friendly to a maintainer who wants a quick fix.
+Single feature branch, single release, no upstream coordination.
 
-**Branch 2, `fix/material-encryption-parse-sniff`** (upstream PR #2, depends on #1, structural fix)
+**Branch `fix/material-encryption`** (fork, all code changes together)
 - `paz_crypto.py`: add `looks_like_plaintext_head` and `detect_encryption_from_head`
-- `paz_parse.py`: `_populate_encryption_overrides` + integration in `parse_pamt`
-- `tests/`: unit tests on the two helpers + integration test with synthetic fixture
-- Open as draft until PR #1 merges, then rebase and request review.
-- Rationale: structural fix so future encrypted extensions are auto-detected and the whitelist becomes an IOError fallback only.
+- `paz_parse.py`: widen the whitelist in `PazEntry.encrypted`; add `_populate_encryption_overrides` step in `parse_pamt`
+- `tests/test_material_encryption_regression.py`: unit tests on helpers + whitelist regression test + integration test with synthetic fixture
+- Rationale: with no upstream review pressure, one logical change = one branch is simpler than splitting. Reviewability is for our own future-self via the design doc and commit history.
 
-**Branch 3, `fork/windows-ci`** (fork-only, not upstreamed)
+**Branch `fork/windows-ci`** (fork, independent)
 - `.github/workflows/release-windows.yml`
 - Triggers: `workflow_dispatch` + `tags: ['v*']`
 - Steps: setup-python 3.13, Rust toolchain (windows-msvc), cache cargo + native target, `maturin develop --release`, `pyinstaller cdumm.spec --clean`, upload artifact, attach to Release if tag-triggered.
-- Independent of branches 1 and 2 (can be developed in parallel).
+- Independent of the fix branch; can be built and tested in parallel.
 
-**Release branch, `release/encryption-fix`** (fork)
-- Merges branches 1, 2, 3 on top of `master`.
-- Trigger `workflow_dispatch` manually on this branch to produce the `.exe`.
-- Distribute the artifact link (Nexus comment, fork README) to users.
+**Release flow**
+- Merge `fix/material-encryption` into `master` once tests pass.
+- Merge `fork/windows-ci` into `master`.
+- Either trigger `workflow_dispatch` on `master` (artifact-only) or push a tag `v3.3.11-encryption-fix` (artifact + Release with the `.exe` attached).
+- Distribute via Nexus comment / fork README pointing at the artifact or Release.
 
 ## Open items confirmed during brainstorm
 
 - Detection layer: parse-time only. No belt-and-suspenders at repack.
 - Compression handling: `lz4.block.decompress` attempt for `compression_type == 2`; printable heuristic otherwise. LZ4 collision risk accepted.
 - Whitelist: kept as IOError fallback only, widened to include `.material`, `.technique`, `.thtml`.
-- PR strategy: two separate upstream PRs, split by logical change.
-- Fork release: dedicated `release/encryption-fix` branch, `.exe` as workflow artifact, optional Release on tag push.
+- Delivery: fork-only, no upstream PRs. One feature branch for the fix, one for CI.
+- Release: `.exe` as `workflow_dispatch` artifact by default; tag push creates a GitHub Release with the `.exe` attached.
 - Test fixture: synthetic generation in `conftest.py`, no game data committed.
 
 ## References
