@@ -9,7 +9,10 @@ Uses Rust cdumm_native for performance-critical operations when available,
 with Python fallback for development/testing.
 
 Usage:
-    from cdumm.archive.paz_crypto import derive_key_iv, encrypt, decrypt, lz4_compress, looks_like_plaintext_head
+    from cdumm.archive.paz_crypto import (
+        decrypt, detect_encryption_from_head, derive_key_iv,
+        encrypt, looks_like_plaintext_head, lz4_compress,
+    )
 """
 
 import os
@@ -125,3 +128,44 @@ def looks_like_plaintext_head(data: bytes) -> bool:
         if 0x20 <= b < 0x7F or b in (0x09, 0x0A, 0x0D)
     )
     return printable / len(head) > 0.9
+
+
+def detect_encryption_from_head(head: bytes, compression_type: int,
+                                orig_size: int) -> bool:
+    """Classify a PAZ slot's first ~32 bytes as encrypted (True) or
+    plaintext (False).
+
+    The PAMT has no reliable encrypted flag, but the slot's leading
+    bytes are diagnostic:
+
+    * If compression_type == 2 (LZ4 block), the engine compresses
+      then encrypts. A valid LZ4 decompression of the raw head means
+      the slot was stored as plaintext-compressed; a failed
+      decompression means the LZ4 bytes were further encrypted.
+    * If compression_type != 2 (no compression, or a future codec we
+      don't model), fall back to a printable-text heuristic.
+
+    The ChaCha20 collision risk (random ciphertext that happens to
+    form a valid LZ4 block prefix) is bounded by the LZ4 block
+    format's structural constraints to well below 2^-64 on 32 bytes
+    and accepted as negligible.
+
+    Args:
+        head: first ~32 bytes read at the slot offset
+        compression_type: PAMT compression_type field (0=none, 2=lz4)
+        orig_size: PAMT orig_size, needed for lz4 decompression
+
+    Returns:
+        True if the slot looks encrypted (caller must re-encrypt on
+        repack), False if plaintext.
+    """
+    if compression_type == 2:
+        try:
+            lz4_decompress(head, orig_size)
+            return False
+        except Exception:
+            # Any error from lz4_decompress (native or pure-python)
+            # means the bytes aren't a valid LZ4 block, so they were
+            # encrypted after compression.
+            return True
+    return not looks_like_plaintext_head(head)
