@@ -69,10 +69,20 @@ jobs:
           python -m pip install maturin pyinstaller
           python -m pip install -e .
 
-      - name: Build native extension
+      - name: Build native extension wheel
+        # maturin develop requires an active virtualenv that
+        # actions/setup-python does not provide. Build a wheel
+        # instead, then pip-install it into the runner's Python
+        # so PyInstaller can resolve `cdumm_native` via importlib.
         shell: pwsh
         working-directory: native
-        run: maturin develop --release
+        run: maturin build --release --out dist
+
+      - name: Install native extension wheel
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem native\dist\*.whl | Select-Object -First 1
+          python -m pip install --force-reinstall $wheel.FullName
 
       - name: Build .exe
         shell: pwsh
