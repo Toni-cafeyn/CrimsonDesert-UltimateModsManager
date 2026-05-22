@@ -79,6 +79,11 @@ _MAX_SANE_PAZ_COUNT = 4096
 def parse_pamt(pamt_path: str, paz_dir: str = None) -> list[PazEntry]:
     """Parse a .pamt index file and return all file entries.
 
+    After parsing, every entry's `_encrypted_override` is populated by
+    sniffing the first 32 bytes of its PAZ slot. Downstream consumers
+    therefore see a precomputed encryption verdict via the existing
+    PazEntry.encrypted property, regardless of file extension.
+
     Args:
         pamt_path: path to the .pamt file
         paz_dir: directory containing .paz files (default: same dir as .pamt)
@@ -93,7 +98,7 @@ def parse_pamt(pamt_path: str, paz_dir: str = None) -> list[PazEntry]:
             shipped the corrupt archive.
     """
     try:
-        return _parse_pamt_impl(pamt_path, paz_dir)
+        entries = _parse_pamt_impl(pamt_path, paz_dir)
     except (struct.error, IndexError) as e:
         # Surface low-level parse errors as a clean ValueError. Callers
         # (import_handler precheck, apply_engine precheck) need one
@@ -101,6 +106,9 @@ def parse_pamt(pamt_path: str, paz_dir: str = None) -> list[PazEntry]:
         # mod" from actual bugs.
         raise ValueError(
             f"Corrupt PAMT {os.path.basename(pamt_path)}: {e}") from e
+
+    _populate_encryption_overrides(entries)
+    return entries
 
 
 def _bounds_check(pamt_path: str, what: str, declared: int,

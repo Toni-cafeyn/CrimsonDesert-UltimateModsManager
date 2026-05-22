@@ -269,3 +269,39 @@ class TestPopulateEncryptionOverrides:
         _populate_encryption_overrides([entry])
 
         assert entry._encrypted_override is True
+
+
+class TestParsePamtPopulatesOverrides:
+    """End-to-end: parse_pamt runs the sniff and downstream code
+    sees correct .encrypted verdicts on .material entries."""
+
+    def test_parse_pamt_populates_override_on_material_entry(self, tmp_path):
+        from tests.fixtures._material_encryption_synth import (
+            build_synthetic_pamt_paz,
+        )
+        from cdumm.archive.paz_parse import parse_pamt
+
+        pamt_path, _paz_path, plan = build_synthetic_pamt_paz(tmp_path)
+
+        entries = parse_pamt(str(pamt_path), paz_dir=str(tmp_path))
+
+        by_path = {e.path: e for e in entries}
+        # The synthetic fixture lays out one entry per content category.
+        material = by_path[plan['material_path']]
+        xml = by_path[plan['xml_path']]
+        binary = by_path[plan['bin_path']]
+
+        # .material was encrypted in the fixture; sniff must catch it
+        # even though no extension widening is needed (the whitelist
+        # also covers .material now, but we want to prove the sniff
+        # itself wrote the override).
+        assert material._encrypted_override is True
+        assert material.encrypted is True
+
+        # .xml was encrypted: override True.
+        assert xml._encrypted_override is True
+
+        # Plaintext .bin: override False (sniff wins over the
+        # whitelist, which would have said False anyway).
+        assert binary._encrypted_override is False
+        assert binary.encrypted is False
