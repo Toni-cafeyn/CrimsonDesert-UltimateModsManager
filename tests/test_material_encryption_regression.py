@@ -362,3 +362,39 @@ class TestParsePamtPopulatesOverrides:
         # known encrypted extensions list).
         assert binary._encrypted_override is None
         assert binary.encrypted is False
+
+
+class TestMaterialRoundTripIsByteIdentical:
+    def test_repack_of_decrypted_material_matches_original_slot(self, tmp_path):
+        from tests.fixtures._material_encryption_synth import (
+            build_synthetic_pamt_paz,
+        )
+        from cdumm.archive.paz_parse import parse_pamt
+        from cdumm.archive.paz_crypto import decrypt
+        from cdumm.archive.paz_repack import repack_entry_bytes
+
+        pamt_path, paz_path, plan = build_synthetic_pamt_paz(tmp_path)
+        paz_blob_before = paz_path.read_bytes()
+
+        entries = parse_pamt(str(pamt_path), paz_dir=str(tmp_path))
+        material = next(
+            e for e in entries if e.path == plan['material_path']
+        )
+
+        # Read the original encrypted slot.
+        original_slot = paz_blob_before[
+            material.offset : material.offset + material.comp_size
+        ]
+
+        # Decrypt with the same key derivation the runtime uses.
+        plaintext = decrypt(original_slot, 'water.material')
+
+        # Repack: should re-encrypt because _encrypted_override=True.
+        repacked, _, _ = repack_entry_bytes(plaintext, material)
+
+        # Bit-identical to the original slot in the PAZ.
+        assert repacked == original_slot, (
+            f"Repack differs from original at "
+            f"{sum(a != b for a, b in zip(repacked, original_slot))} "
+            f"of {len(original_slot)} bytes"
+        )
