@@ -3,7 +3,7 @@
 Provides ChaCha20 encryption/decryption with deterministic key derivation,
 and LZ4 block compression/decompression for Crimson Desert PAZ archives.
 
-Keys are derived from the filename alone — no key database needed.
+Keys are derived from the filename alone, no key database needed.
 
 Uses Rust cdumm_native for performance-critical operations when available,
 with Python fallback for development/testing.
@@ -96,3 +96,32 @@ def lz4_compress(data: bytes) -> bytes:
         return _native.lz4_compress(data)
     import lz4.block
     return lz4.block.compress(data, store_size=False)
+
+
+# Encryption detection helpers
+
+
+def looks_like_plaintext_head(data: bytes) -> bool:
+    """True if the first ~16 useful bytes look like printable text.
+
+    Strips an optional UTF-8 BOM and leading whitespace so XML files
+    with a BOM or leading indentation still match. Random ChaCha20
+    output hits ~37% printable bytes; real text hits ~99%. The 0.9
+    threshold cleanly separates the two on 16 bytes.
+
+    Used by detect_encryption_from_head to distinguish a plaintext
+    PAZ slot from one that was encrypted by the game runtime.
+    """
+    if not data:
+        return False
+    if data.startswith(b'\xef\xbb\xbf'):
+        data = data[3:]
+    stripped = data.lstrip(b' \t\r\n')
+    if not stripped:
+        return False
+    head = stripped[:16]
+    printable = sum(
+        1 for b in head
+        if 0x20 <= b < 0x7F or b in (0x09, 0x0A, 0x0D)
+    )
+    return printable / len(head) > 0.9
